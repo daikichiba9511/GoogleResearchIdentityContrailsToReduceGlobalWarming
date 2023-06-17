@@ -2,7 +2,7 @@ import os
 import random
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable, Protocol
 
 import numpy as np
 import torch
@@ -414,7 +414,9 @@ def train_one_epoch(
     return train_assets
 
 
-MetricsFn = Callable[[np.ndarray, np.ndarray], dict[str, float | int]]
+class MetricsFn(Protocol):
+    def __call__(self, preds: np.ndarray, target: np.ndarray) -> dict[str, float | int]:
+        ...
 
 
 def valid_per_epoch(
