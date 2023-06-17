@@ -419,7 +419,7 @@ class MetricsFn(Protocol):
         ...
 
 
-def valid_per_epoch(
+def valid_one_epoch(
     fold: int,
     epoch: int,
     model: nn.Module,
