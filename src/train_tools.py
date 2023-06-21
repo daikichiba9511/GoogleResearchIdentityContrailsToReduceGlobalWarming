@@ -2,7 +2,8 @@ import os
 import random
 from dataclasses import dataclass
 from logging import getLogger
-from typing import Any, Callable, Iterable, Protocol
+from pathlib import Path
+from typing import Callable, Iterable, Protocol
 
 import numpy as np
 import torch
@@ -183,6 +184,65 @@ class AverageMeter:
         return {"name": self.name, "avg": self.avg, "row_values": self.rows}
 
 
+class EarlyStopping:
+    def __init__(
+        self,
+        patience: int = 7,
+        verbose: bool = False,
+        delta: float = 0,
+        logger_fn: Callable = print,
+        save_dir: Path = Path("./output"),
+        fold: str = "0",
+        save_prefix: str = "",
+    ) -> None:
+        self.patience = patience
+        self.verbose = verbose
+        self.counter = 0
+        self.best_score: float | None = None
+        self.early_stop = False
+        self.min_score = np.Inf
+        self.delta = delta
+        self.logger_fn = logger_fn
+        self.fold = fold
+        self.save_prefix = save_prefix
+        self.save_dir = save_dir
+        self.save_dir.mkdir(parents=True, exist_ok=True)
+
+    def __call__(self, score: float, model: nn.Module, save_path: Path | str) -> None:
+        if self.best_score is None:
+            self.best_score = score
+            self.save_checkpoint(score, model=model)
+
+        if score < self.best_score + self.delta:
+            self.counter += 1
+            self.logger_fn(
+                f"EarlyStopping Counter: {self.counter} out of {self.patience}"
+                + f" for fold {self.fold} with best score {self.best_score}"
+            )
+            if self.counter >= self.patience:
+                self.early_stop = True
+
+        # score >= self.best_score + self.delta
+        else:
+            self.logger_fn(
+                f"Detected Increasing Score: best score {self.best_score} --> {score}"
+            )
+            self.best_score = score
+            self.save_checkpoint(
+                score, model=model, save_path=self.save_dir / save_path
+            )
+            self.counter = 0
+
+    def save_checkpoint(self, score: float, model: nn.Module, save_path: Path) -> None:
+        """Save model when validation loss decrease."""
+        if self.verbose:
+            self.logger_fn(f"Validation loss decreased ({self.min_score} --> {score})")
+
+        state_dict = model.state_dict()
+        torch.save(state_dict, save_path)
+        self.min_score = score
+
+
 def seed_everything(seed: int = 42) -> None:
     random.seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
@@ -220,11 +280,16 @@ def _freeze_model(model: nn.Module, freeze_keys: Iterable[str] = ["encoder"]) ->
             param.requires_grad = False
 
 
-def scheduler_step(scheduler: optim.lr_scheduler.LRScheduler, loss: float) -> None:
+def scheduler_step(
+    scheduler: optim.lr_scheduler.LRScheduler, loss: float, epoch: int = None
+) -> None:
     if loss in [float("inf"), float("-inf"), None, torch.nan]:
         return
 
-    scheduler.step(loss)
+    if epoch is None:
+        scheduler.step()
+    else:
+        scheduler.step(epoch=epoch)
 
 
 @dataclass(frozen=True)
@@ -435,6 +500,7 @@ def valid_one_epoch(
     model.eval()
     valid_losses = AverageMeter(name="valid_loss")
     valid_bces = AverageMeter(name="valid_bce")
+    valid_dices = AverageMeter(name="valid_dice")
 
     with tqdm(
         enumerate(valid_loader),
@@ -469,23 +535,16 @@ def valid_one_epoch(
 
                 loss = loss_mask + loss_cls
 
-            valid_losses.update(value=loss.item(), n=batch_size)
-
             # make a whole image prediction
-            # y_preds: (N, H, W)
-            y_preds = torch.sigmoid(logits)
-            y_preds = y_preds.to("cpu").detach().numpy()
+            # y_preds: (N, H, W), target: (N, H, W)
+            y_preds = torch.sigmoid(logits).to("cpu").detach().numpy()
+            target = target.to("cpu").detach().numpy()
 
-            valid_metrics = metrics_fn(
-                target=target.to("cpu").detach().numpy(), preds=y_preds
-            )
+            valid_metrics = metrics_fn(target=target, preds=y_preds)
 
-            # assert y_preds.shape == (batch_size, 1, crop_size, crop_size)
-            # start_idx = step * batch_size
-            # end_idx = start_idx + batch_size
-            # for i, (x1, y1, x2, y2) in enumerate(valid_xyxys[start_idx:end_idx]):
-            #     mask_preds[y1:y2, x1:x2] += y_preds[i].squeeze(0)
-            #     mask_count[y1:y2, x1:x2] += np.ones((crop_size, crop_size))
+            # aggregate metrics
+            valid_losses.update(value=loss.item(), n=batch_size)
+            valid_bces.update(value=valid_metrics["dice"], n=batch_size)
 
             # TODO: どの指標を管理するか考える
             valid_log_assets = {
@@ -531,5 +590,6 @@ def valid_one_epoch(
     # mask_preds /= mask_count + 1e-7
     valid_assets = {
         "valid_avg_loss": valid_losses.avg,
+        "valid_avg_dice": valid_dices.avg,
     }
     return valid_assets

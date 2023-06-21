@@ -7,12 +7,12 @@ from transformers import get_cosine_schedule_with_warmup
 from typing_extensions import assert_never
 
 __all__ = [
-    "ScheduelrTypeStr",
+    "SchedulerTypeStr",
     "SchedulerType",
     "get_scheduler",
 ]
 
-ScheduelrTypeStr: TypeAlias = Literal["cosine_with_warmup"]
+SchedulerTypeStr: TypeAlias = Literal["cosine_with_warmup"]
 
 
 class SchedulerType(str, Enum):
@@ -20,7 +20,7 @@ class SchedulerType(str, Enum):
 
 
 def get_scheduler(
-    scheduler_type: ScheduelrTypeStr | SchedulerType,
+    scheduler_type: SchedulerTypeStr | SchedulerType,
     scheduler_params: dict[str, object],
     optimizer: optim.Optimizer,
 ) -> optim.lr_scheduler.LRScheduler:

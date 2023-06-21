@@ -14,3 +14,5 @@ notebooks
 Dockerfile
 docker-compose.yaml
 .devcontainer
+wandb
+submission.csv

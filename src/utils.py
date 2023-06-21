@@ -1,7 +1,11 @@
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
 from typing import Final
 
+import numpy as np
+
 __all__ = ["get_stream_logger", "add_file_handler"]
+
+logger = getLogger(__name__)
 
 DEFAULT_FORMAT: Final[
     str
@@ -26,3 +30,45 @@ def add_file_handler(
     handler.setLevel(level)
     handler.setFormatter(Formatter(format))
     logger.addHandler(handler)
+
+
+def list_to_string(x: list[object]) -> str:
+    if x:
+        return str(x).replace("[", "").replace("]", "").replace(",", "")
+    return "-"
+
+
+def rle_encode(preds, fg_val: int = 1) -> str:
+    """
+    Args:
+        preds (np.ndarray): Predictions of shape (H, W), 1 - mask, 0 - background
+    """
+    dots = np.where(preds.T.flatten() == fg_val)[0]
+    run_lengths = []
+    prev = -2
+    for b in dots:
+        if b > prev + 1:
+            run_lengths.extend((b + 1, 0))
+        run_lengths[-1] += 1
+        prev = b
+    return list_to_string(run_lengths)
+
+
+def rle_decode(mask_rle: str, shape: tuple[int, int]) -> np.ndarray:
+    """
+    Args:
+        mask_rle (str): Run-length as string formated (start length)
+        shape (tuple[int, int]): (height, width) of array to return
+    Returns:
+        np.ndarray: 1 - mask, 0 - background
+    """
+    image = np.zeros(shape[0] * shape[1], dtype=np.uint8)
+    if mask_rle != "-":
+        s = mask_rle.split()
+        starts, length = [np.asarray(x, dtype=int) for x in (s[0:][::2], s[1:][::2])]
+        starts -= 1
+        ends = starts + length
+        for lo, hi in zip(starts, ends):
+            image[lo:hi] = 1
+    # Fortran like index ordering
+    return image.reshape(shape, order="F")
