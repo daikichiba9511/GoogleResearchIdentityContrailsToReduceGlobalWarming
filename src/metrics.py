@@ -1,19 +1,20 @@
+import numpy as np
 import torch
 
 __all__ = ["dice", "calc_metrics"]
 
 
-def dice(pred: torch.Tensor, mask: torch.Tensor) -> float:
+def dice(pred: np.ndarray, mask: np.ndarray) -> float:
     intersection = (pred * mask).sum()
     pred_sum = pred.sum()
     mask_sum = mask.sum()
     dice = (2.0 * intersection) / (pred_sum + mask_sum)
-    dice = torch.mean(dice)
+    dice = np.mean(dice)
     return dice.item()
 
 
-def calc_metrics(pred: torch.Tensor, mask: torch.Tensor) -> dict[str, float]:
-    dice_coef = dice(pred, mask)
+def calc_metrics(preds: torch.Tensor, target: torch.Tensor) -> dict[str, float]:
+    dice_coef = dice(preds, target)
 
     metrics = {
         "dice": dice_coef,

@@ -8,18 +8,24 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
-from configs.factory import Config, init_config
-from src.dataset import ContrailsDataset
-from src.models import ContrailsModel
-from src.utils import rle_encode
+try:
+    from configs.factory import Config, init_config
+    from src.dataset import ContrailsDataset
+    from src.models import ContrailsModel
+    from src.utils import rle_encode
 
-ROOT = Path(".").resolve()
+    IS_KAGGLE = False
+except Exception:
+    IS_KAGGLE = True
+
+ROOT = Path("..").resolve() if IS_KAGGLE else Path(".").resolve()
+DATA_ROOT = ROOT / "input" / "google-research-identify-contrails-reduce-global-warming"
 
 
 def get_loader(config: Config) -> DataLoader:
-    filenames = os.listdir(config.data_root_path / "test")
+    filenames = os.listdir(f"{DATA_ROOT}/test")
     test_df = pd.DataFrame(filenames, columns=["record_id"])
-    test_df["path"] = config.data_root_path / "test" / test_df["record_id"].astype(str)
+    test_df["path"] = DATA_ROOT / "test" / test_df["record_id"].astype(str)
     print(test_df)
 
     dataset = ContrailsDataset(
@@ -38,12 +44,14 @@ def get_loader(config: Config) -> DataLoader:
     return dataloader
 
 
-def get_contrails_model(config) -> nn.Module:
-    # checkpoint = config.checkpoints[0]
+def get_contrails_model(config: Config) -> nn.Module:
+    checkpoint = config.checkpoints[0]
     encoder_name = config.encoder_name
 
+    print(f"Loading checkpoint: {checkpoint}")
+
     contrails_model = ContrailsModel(encoder_name=encoder_name, encoder_weight=None)
-    # contrails_model.load_state_dict(torch.load(checkpoint))
+    contrails_model.load_state_dict(torch.load(checkpoint))
 
     return contrails_model
 
@@ -58,7 +66,7 @@ def main(config: Config) -> None:
 
     threshold = config.threshold
 
-    submission_path = "./input/google-research-identify-contrails-reduce-global-warming/sample_submission.csv"
+    submission_path = f"{DATA_ROOT}/sample_submission.csv"
     submission = pd.read_csv(submission_path, index_col="record_id")
 
     for i, batch in enumerate(loader):
@@ -72,8 +80,8 @@ def main(config: Config) -> None:
         preds = torch.sigmoid(logits).to("cpu").detach().numpy()
 
         contrails_images = np.zeros((batch_size, 256, 256))
-        contrails_images[preds[:, 0, :, :] < threshold] = 0
-        contrails_images[preds[:, 0, :, :] >= threshold] = 1
+        contrails_images[preds < threshold] = 0
+        contrails_images[preds >= threshold] = 1
 
         for image_idx in range(batch_size):
             current_contrails_image = contrails_images[image_idx, :, :]
@@ -84,15 +92,16 @@ def main(config: Config) -> None:
 
     print("\nSubmission:")
     print(submission)
-    submission.to_csv("submission.csv", index=False)
+    submission.to_csv("submission.csv")
     print("\n ### Inference is done! ###")
 
 
 if __name__ == "__main__":
-    parser = ArgumentParser()
-    parser.add_argument("--config", type=Path, required=True)
-    parser.add_argument("--debug", default=False, action="store_true")
-    args = parser.parse_args()
-    config_path = f"configs.{args.config}"
-    config = init_config(Config, config_path=config_path)
+    if not IS_KAGGLE:
+        parser = ArgumentParser()
+        parser.add_argument("--config", type=Path, required=True)
+        parser.add_argument("--debug", default=False, action="store_true")
+        args = parser.parse_args()
+        config_path = f"configs.{args.config}"
+        config = init_config(Config, config_path=config_path)
     main(config=config)

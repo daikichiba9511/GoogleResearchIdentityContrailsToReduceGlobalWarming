@@ -1,4 +1,6 @@
+import gc
 import multiprocessing as mp
+import os
 import pprint
 import uuid
 from datetime import datetime
@@ -32,19 +34,29 @@ TODAY = datetime.today().strftime("%Y%m%d")
 
 
 def make_df(data_root_path: Path, image_root_path: Path, phase: str) -> pd.DataFrame:
-    filenames = list(image_root_path.rglob("*"))
-    df = pd.DataFrame(filenames, columns=["record_id"])
-    df["path"] = data_root_path / phase / df["record_id"].astype(str)
+    filenames = os.listdir(data_root_path / phase)
+    paths = []
+    for record_id in filenames:
+        label = image_root_path / record_id / "human_pixel_masks.npy"
+        for image_file_path in (image_root_path / record_id).glob("band_*.npy"):
+            paths.append(
+                {"record_id": record_id, "path": image_file_path, "label": label}
+            )
+    df = pd.DataFrame(paths)
+    # print(df)
+    # print(df.iloc[0])
+    # print(df.iloc[0]["record_id"])
+    # print(df.iloc[0]["path"])
     return df
 
 
 def get_dfs(config: Config) -> tuple[pd.DataFrame, pd.DataFrame]:
-    # contrails = config.data_root_path / "contrails"
-    train_path = config.data_root_path / "train"
-    valid_path = config.data_root_path / "valid"
-    train_df = pd.read_csv(config.data_root_path / "train.csv")
+    train_path = valid_path = str(config.data_root_path / "contrails") + "/"
+    # train_path = config.data_root_path / "train"
+    # valid_path = config.data_root_path / "validation"
+    train_df = pd.read_csv(config.data_root_path / "train_df.csv")
     train_df["path"] = train_path + train_df["record_id"].astype(str) + ".npy"
-    valid_df = pd.read_csv(config.data_root_path / "valid.csv")
+    valid_df = pd.read_csv(config.data_root_path / "valid_df.csv")
     valid_df["path"] = valid_path + valid_df["record_id"].astype(str) + ".npy"
     return train_df, valid_df
 
@@ -57,14 +69,16 @@ def get_loaders(
             config.data_root_path, config.data_root_path / "train", "train"
         )
         valid_df = make_df(
-            config.data_root_path, config.data_root_path / "valid", "valid"
+            config.data_root_path, config.data_root_path / "validation", "validation"
         )
     else:
         train_df, valid_df = get_dfs(config)
 
+    num_workers = mp.cpu_count()
     if debug:
         train_df = train_df.sample(n=100, random_state=0)
         valid_df = valid_df.sample(n=100, random_state=0)
+        num_workers = 1
 
     train_dataset = ContrailsDataset(
         df=train_df, image_size=config.image_size, train=True
@@ -72,7 +86,6 @@ def get_loaders(
     valid_dataset = ContrailsDataset(
         df=valid_df, image_size=config.image_size, train=True
     )
-    num_workers = mp.cpu_count()
     train_loader = DataLoader(
         dataset=train_dataset,
         batch_size=config.train_batch_size,
@@ -83,7 +96,7 @@ def get_loaders(
     )
     valid_loader = DataLoader(
         dataset=valid_dataset,
-        batch_size=config.train_batch_size,
+        batch_size=config.valid_batch_size,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=True,
@@ -92,12 +105,15 @@ def get_loaders(
     return train_loader, valid_loader
 
 
-def main(exp_ver: str, all: bool = False, debug: bool = False) -> None:
+def main(
+    exp_ver: str, all: bool = False, debug: bool = False, remake_df: bool = False
+) -> None:
     """
     Args:
         exp_ver: experiment version (e.g. exp000, exp001, ...)
         all: If True, train all folds
         debug: If True, train with debug mode
+        remake_df: If True, remake dataframe
     """
     config_path = f"configs.{exp_ver}"
     logger.info(f"config_path: {config_path}")
@@ -106,7 +122,8 @@ def main(exp_ver: str, all: bool = False, debug: bool = False) -> None:
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     uid = str(uuid.uuid4())[:8]
-    add_file_handler(logger, config.output_dir / f"train-{TODAY}-{uid}.log")
+    log_file_path = config.output_dir / f"train-{TODAY}-{uid}.log"
+    add_file_handler(logger, log_file_path)
 
     train_fold = list(config.n_splits) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -131,10 +148,13 @@ def main(exp_ver: str, all: bool = False, debug: bool = False) -> None:
         seed_everything(config.seed)
         logger.info(f"## Fold: {fold} ##")
 
-        train_loader, valid_loader = get_loaders(config, remake_df=True, debug=debug)
+        train_loader, valid_loader = get_loaders(
+            config, remake_df=remake_df, debug=debug
+        )
         model = ContrailsModel(
             encoder_name=config.encoder_name, encoder_weight=config.encoder_weight
         )
+        model = model.to(device=device)
         optimizer = get_optimizer(
             optimizer_type=config.optimizer_type,
             optimizer_params=config.optimizer_params,
@@ -176,32 +196,40 @@ def main(exp_ver: str, all: bool = False, debug: bool = False) -> None:
                 epoch=epoch,
                 model=model,
                 valid_loader=valid_loader,
-                loss=loss,
+                criterion=loss,
                 device=device,
                 metrics_fn=calc_metrics,
                 use_amp=use_amp,
+                debug=debug,
             )
-            scheduler_step(scheduer, valid_assets["loss"], epoch=epoch)
+            scheduler_step(scheduer, valid_assets.loss)
 
             logging_assets = {
-                "train/avg_loss": train_assets["loss"],
-                "valid/avg_loss": valid_assets["loss"],
-                "valid/avg_dice": valid_assets["dice"],
+                "train/avg_loss": train_assets.loss,
+                "valid/avg_loss": valid_assets.loss,
+                "valid/avg_dice": valid_assets.dice,
             }
             logger.info(f"{epoch}: \n{pprint.pformat(logging_assets)}")
             wandb.log(logging_assets)
 
-            save_path = f"{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}-epoch{epoch}.pth"
-            earlystopping(valid_assets["dice"], model, save_path)
+            save_path = (
+                f"{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
+            )
+            earlystopping(valid_assets.dice, model, save_path)
             if earlystopping.early_stop:
                 logger.info("Early stopping")
                 break
 
         save_path = f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}-epoch{epoch}.pth"
-        earlystopping.save_checkpoint(float("inf"), model, save_path)
+        earlystopping.save_checkpoint(
+            float("inf"), model, config.output_dir / save_path
+        )
         logger.info(f"## Fold: {fold} End ##")
         run.finish()
-    logger.info("## All End ##")
+
+        gc.collect()
+        torch.cuda.empty_cache()
+    logger.info(f"## All End. Log -> {log_file_path} ##")
 
 
 if __name__ == "__main__":

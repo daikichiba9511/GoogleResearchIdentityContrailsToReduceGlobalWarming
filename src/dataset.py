@@ -9,6 +9,23 @@ from torch.utils.data import Dataset
 
 
 class ContrailsDataset(Dataset):
+    """ContrailsDataset
+
+    Args:
+        df (pd.DataFrame): dataframe of contrails dataset containing path to image files.
+        image_size (int, optional): image size. Defaults to 224.
+        train (bool, optional): whether to use train dataset. Defaults to True.
+        normalize_fn (Callable, optional): normalization function. Defaults to None.
+
+    NOTE:
+        trainのときは前処理でRGB画像にしてる公開データセットを使う
+        ラベルがついてるtimestampの画像のみつかってることに注意する
+
+    References:
+    [1] https://www.kaggle.com/code/egortrushin/gr-icrgw-training-with-4-folds
+    [2] https://www.kaggle.com/datasets/shashwatraman/contrails-images-ash-color
+    """
+
     def __init__(
         self,
         df: pd.DataFrame,
@@ -66,22 +83,31 @@ class ContrailsDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         row = self.df.iloc[index]
-        contrails_image_path = row["path"]
         if self.is_train:
+            contrails_image_path = row["path"]
+            # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
+            # n_times_before = 4, n_times_after = 3
             contrails_image = np.load(str(contrails_image_path))
+            # print(contrails_image.shape)
             # TODO: なんで-1をつかってるか調べる
             image = contrails_image[..., :-1]
             label = contrails_image[..., -1]
-            label = torch.tensor(label).float()
+
+            # shape: (T, 256, 256)
+            # print(image.shape)
+            # print(label.shape)
             image = (
                 torch.tensor(np.reshape(image, (256, 256, 3))).float().permute(2, 0, 1)
             )
+            label = torch.tensor(np.reshape(label, (256, 256)))
+
             if self.image_size != 256 and self.resize_image_fn is not None:
                 image = self.resize_image(image)
 
             image = self.normalize_image(image)
             return image, label
         else:
+            contrails_image_path = row["path"]
             record_data = self.read_record(contrails_image_path)
             image = self.get_false_color(record_data)
             image = (

@@ -1,6 +1,7 @@
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
 from typing import Final
 
+import matplotlib.pyplot as plt
 import numpy as np
 
 __all__ = ["get_stream_logger", "add_file_handler"]
@@ -72,3 +73,18 @@ def rle_decode(mask_rle: str, shape: tuple[int, int]) -> np.ndarray:
             image[lo:hi] = 1
     # Fortran like index ordering
     return image.reshape(shape, order="F")
+
+
+def plot_preds(
+    pred: np.ndarray, image: np.ndarray, label: np.ndarray, threshold: float = 0.5
+) -> tuple:
+    fig, ax = plt.subplots(1, 4)
+    ax[0].imshow(pred)
+    ax[0].set_title("Pred")
+    ax[1].imshow(pred > threshold)
+    ax[1].set_title(f"Contrails {threshold}")
+    ax[2].imshow(image)
+    ax[2].set_title("Image")
+    ax[3].imshow(label)
+    ax[3].set_title("Label")
+    return fig, ax

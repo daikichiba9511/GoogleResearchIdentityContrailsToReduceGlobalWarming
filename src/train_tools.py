@@ -1,5 +1,6 @@
 import os
 import random
+from collections import namedtuple
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
@@ -10,14 +11,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import wandb
 from torch import autocast
 from torch.cuda.amp import GradScaler
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
+import wandb
 from src.augmentations import cutmix, label_noise, mixup
 from src.losses import LossFn
+from src.utils import plot_preds
 
 logger = getLogger(__name__)
 
@@ -194,6 +196,7 @@ class EarlyStopping:
         save_dir: Path = Path("./output"),
         fold: str = "0",
         save_prefix: str = "",
+        direction: str = "maximize",
     ) -> None:
         self.patience = patience
         self.verbose = verbose
@@ -207,13 +210,22 @@ class EarlyStopping:
         self.save_prefix = save_prefix
         self.save_dir = save_dir
         self.save_dir.mkdir(parents=True, exist_ok=True)
+        self.direction = direction
 
     def __call__(self, score: float, model: nn.Module, save_path: Path | str) -> None:
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(score, model=model)
+            self.save_checkpoint(
+                score, model=model, save_path=self.save_dir / save_path
+            )
 
-        if score < self.best_score + self.delta:
+        is_min_update = (
+            self.direction == "maximize" and score < self.best_score + self.delta
+        )
+        is_max_update = (
+            self.direction == "minimize" and score > self.best_score + self.delta
+        )
+        if is_min_update or is_max_update:
             self.counter += 1
             self.logger_fn(
                 f"EarlyStopping Counter: {self.counter} out of {self.patience}"
@@ -222,10 +234,12 @@ class EarlyStopping:
             if self.counter >= self.patience:
                 self.early_stop = True
 
-        # score >= self.best_score + self.delta
+        # update best score
+        # maximize: score >= self.best_score + self.delta
+        # minimize: score <= self.best_score + self.delta
         else:
             self.logger_fn(
-                f"Detected Increasing Score: best score {self.best_score} --> {score}"
+                f"Detected update Score: best score {self.best_score} --> {score}"
             )
             self.best_score = score
             self.save_checkpoint(
@@ -236,7 +250,7 @@ class EarlyStopping:
     def save_checkpoint(self, score: float, model: nn.Module, save_path: Path) -> None:
         """Save model when validation loss decrease."""
         if self.verbose:
-            self.logger_fn(f"Validation loss decreased ({self.min_score} --> {score})")
+            self.logger_fn(f"Updated Score: ({self.min_score} --> {score})")
 
         state_dict = model.state_dict()
         torch.save(state_dict, save_path)
@@ -325,6 +339,9 @@ class FreezeParams:
     freeze_keys: list[str]
 
 
+TrainAssets = namedtuple("TrainAssets", ["loss"])
+
+
 def train_one_epoch(
     fold: int,
     epoch: int,
@@ -344,7 +361,7 @@ def train_one_epoch(
     aug_params: AugParams | None = None,
     aux_params: AuxParams | None = None,
     freeze_params: FreezeParams | None = None,
-) -> dict[str, object]:
+) -> TrainAssets:
     if awp_params is not None:
         awp = AWP(
             model=model,
@@ -402,15 +419,19 @@ def train_one_epoch(
             if aux_params is not None:
                 target_cls = _make_cls_label(target)
 
-            if not is_frozen and epoch > freeze_params.start_epoch_to_freeze_model:
+            if (
+                not is_frozen
+                and freeze_params is not None
+                and epoch > freeze_params.start_epoch_to_freeze_model
+            ):
                 logger.info(f"freeze model with {freeze_params.freeze_keys}")
                 _freeze_model(model, freeze_keys=freeze_params.freeze_keys)
                 is_frozen = True
 
             with autocast(device_type=device.type, enabled=use_amp):
                 outputs = model(images)
-                logit = outputs["logit"]
-                loss = criterion(logit, target)
+                logits = outputs["logits"]
+                loss = criterion(logits, target)
                 loss_mask = loss
 
                 if (
@@ -473,15 +494,16 @@ def train_one_epoch(
                 pbar.set_postfix(log_assets)
                 wandb.log(wandb_log_assets)
 
-    train_assets = {
-        "train_loss": running_losses.avg,
-    }
+    train_assets = TrainAssets(loss=running_losses.avg)
     return train_assets
 
 
 class MetricsFn(Protocol):
     def __call__(self, preds: np.ndarray, target: np.ndarray) -> dict[str, float | int]:
         ...
+
+
+ValidAssets = namedtuple("ValidAssets", ["loss", "dice"])
 
 
 def valid_one_epoch(
@@ -496,7 +518,8 @@ def valid_one_epoch(
     metrics_fn: MetricsFn | None = None,
     log_prefix: str = "",
     aux_params: AuxParams | None = None,
-) -> dict[str, object]:
+    debug: bool = False,
+) -> ValidAssets:
     model.eval()
     valid_losses = AverageMeter(name="valid_loss")
     valid_bces = AverageMeter(name="valid_bce")
@@ -542,21 +565,37 @@ def valid_one_epoch(
 
             valid_metrics = metrics_fn(target=target, preds=y_preds)
 
+            if debug:
+                # from IPython import embed
+                from pdb import set_trace
+
+                for i in range(batch_size):
+                    plotted_fig, plotted_ax = plot_preds(
+                        pred=y_preds[i],
+                        label=target[i],
+                        image=image[i].cpu().permute(1, 2, 0),
+                        threshold=0.5,
+                    )
+                    plotted_fig.savefig(f"debug/{i}.png")
+                    set_trace()
+
             # aggregate metrics
             valid_losses.update(value=loss.item(), n=batch_size)
-            valid_bces.update(value=valid_metrics["dice"], n=batch_size)
+            valid_dices.update(value=valid_metrics["dice"], n=batch_size)
 
             # TODO: どの指標を管理するか考える
             valid_log_assets = {
-                f"{log_prefix}fold{fold}_valid_loss": loss.item(),
+                f"valid/{log_prefix}fold{fold}_loss": loss.item(),
+                f"valid/{log_prefix}fold{fold}_avg_dice": valid_dices.avg,
                 **valid_metrics,
             }
             valid_wandb_log_assets = {
-                "valid_loss": loss.item(),
+                "loss": loss.item(),
+                "avg_dice": valid_dices.avg,
                 **valid_metrics,
             }
             valid_wandb_log_assets = {
-                f"{log_prefix}fold{fold}_{metrics_name}": value
+                f"valid/{log_prefix}fold{fold}_{metrics_name}": value
                 for metrics_name, value in valid_wandb_log_assets.items()
             }
 
@@ -584,12 +623,5 @@ def valid_one_epoch(
             pbar.set_postfix(valid_log_assets)
             wandb.log(valid_wandb_log_assets)
 
-    # logger.info(
-    #     f"mask_count_min: {mask_count.min()}, mask_count_max: {mask_count.max()}, zero_sum: {(mask_count == 0).sum()}"
-    # )
-    # mask_preds /= mask_count + 1e-7
-    valid_assets = {
-        "valid_avg_loss": valid_losses.avg,
-        "valid_avg_dice": valid_dices.avg,
-    }
+    valid_assets = ValidAssets(loss=valid_losses.avg, dice=valid_dices.avg)
     return valid_assets

@@ -17,7 +17,8 @@ class ContrailsModel(nn.Module):
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         logits = self.model(images)
 
+        # logist: (batch_size, height, width)
         outputs = {
-            "logits": logits,
+            "logits": logits.squeeze(1),
         }
         return outputs

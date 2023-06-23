@@ -11,10 +11,11 @@ config = {
     "arch": "UNet",
     "encoder_name": "resnet18",
     "encoder_weight": "imagenet",
-    "checkpoints": [""],
+    "checkpoints": ["./output/exp001/exp001-UNet-resnet18-fold0.pth"],
     # -- Data
     "data_root_path": Path(
-        f"{root}/input/google-research-identify-contrails-reduce-global-warming"
+        # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
+        f"{root}/input/contrails-images-ash-color"
     ),
     "train_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/train.csv"
@@ -31,7 +32,7 @@ config = {
     "epochs": 20,
     "train_params": {
         "epochs": 10,
-        "lr": 1e-4,
+        "lr": 1e-5,
     },
     "patience": 5,
     "loss_type": "bce",
