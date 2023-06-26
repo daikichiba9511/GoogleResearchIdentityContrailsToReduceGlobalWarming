@@ -39,6 +39,9 @@ class Config:
     output_dir: Path
     train_params: dict[str, int | float]
 
+    cls_weight: float | None
+    aux_params: dict[str, int | float] | None
+
     epochs: int
     patience: int
 

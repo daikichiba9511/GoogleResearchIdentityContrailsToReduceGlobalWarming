@@ -18,8 +18,9 @@ from src.losses import get_loss
 from src.metrics import calc_metrics
 from src.models import ContrailsModel
 from src.optimizer import get_optimizer
-from src.scheduler import get_scheduler
+from src.scheduler import SchedulerType, get_scheduler
 from src.train_tools import (
+    AuxParams,
     EarlyStopping,
     scheduler_step,
     seed_everything,
@@ -152,7 +153,9 @@ def main(
             config, remake_df=remake_df, debug=debug
         )
         model = ContrailsModel(
-            encoder_name=config.encoder_name, encoder_weight=config.encoder_weight
+            encoder_name=config.encoder_name,
+            encoder_weight=config.encoder_weight,
+            aux_params=config.aux_params,
         )
         model = model.to(device=device)
         optimizer = get_optimizer(
@@ -160,18 +163,22 @@ def main(
             optimizer_params=config.optimizer_params,
             model=model,
         )
-        scheduler_params = {
-            "num_warmup_steps": int(
-                len(train_loader) * config.scheduler_params["warmup_step_ratio"]
-            ),
-            "num_training_steps": len(train_loader),
-        }
+        if config.scheduler_type == SchedulerType.CosineWithWarmup:
+            scheduler_params = {
+                "num_warmup_steps": int(
+                    len(train_loader) * config.scheduler_params["warmup_step_ratio"]
+                ),
+                "num_training_steps": len(train_loader) // config.train_batch_size,
+            }
+        else:
+            scheduler_params = config.scheduler_params
         scheduer = get_scheduler(
             scheduler_type=config.scheduler_type,
             scheduler_params=scheduler_params,
             optimizer=optimizer,
         )
         loss = get_loss(loss_type=config.loss_type, loss_params=config.loss_params)
+        cls_loss = torch.nn.BCEWithLogitsLoss()
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         earlystopping = EarlyStopping(
             patience=config.patience, save_dir=config.output_dir, verbose=True
@@ -190,6 +197,8 @@ def main(
                 scaler=scaler,
                 device=device,
                 use_amp=use_amp,
+                criterion_cls=cls_loss,
+                aux_params=AuxParams(cls_weight=config.cls_weight),
             )
             valid_assets = valid_one_epoch(
                 fold=fold,

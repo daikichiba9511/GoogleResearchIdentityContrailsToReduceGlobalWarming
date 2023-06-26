@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Literal, TypeAlias
+from typing import Any, Literal, TypeAlias
 
 import torch.nn as nn
 import torch.optim as optim
@@ -21,7 +21,7 @@ class SchedulerType(str, Enum):
 
 def get_scheduler(
     scheduler_type: SchedulerTypeStr | SchedulerType,
-    scheduler_params: dict[str, object],
+    scheduler_params: dict[str, Any],
     optimizer: optim.Optimizer,
 ) -> optim.lr_scheduler.LRScheduler:
     scheduler_type = SchedulerType(scheduler_type)

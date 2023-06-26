@@ -279,7 +279,7 @@ def _make_cls_label(mask: torch.Tensor) -> torch.Tensor:
     """
     cls_label = mask.sum(dim=(1, 2)) > 0
     assert cls_label.shape == (mask.shape[0],)
-    return cls_label
+    return cls_label.float()
 
 
 def _freeze_model(model: nn.Module, freeze_keys: Iterable[str] = ["encoder"]) -> None:
@@ -480,14 +480,17 @@ def train_one_epoch(
                 }
 
                 if aux_params is not None:
+                    acc = (cls_logits1 == target_cls).sum().item() / batch_size
                     log_assets.update(
                         {
                             "cls_loss": f"{loss_cls.item():.4f}",
+                            "cls_acc": f"{acc:.4f}",
                         }
                     )
                     wandb_log_assets.update(
                         {
-                            f"fold{fold}_cls_train_loss": loss_cls.item(),
+                            f"train/fold{fold}_cls_loss": loss_cls.item(),
+                            f"train/fold{fold}_cls_acc": f"{acc:.4f}",
                         }
                     )
 

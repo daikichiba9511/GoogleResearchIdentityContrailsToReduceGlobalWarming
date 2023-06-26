@@ -5,7 +5,7 @@ expname = __file__.split("/")[-1].split(".")[0]
 
 config = {
     "expname": expname,
-    "description": f"{expname}: Contrails segmentation baseline with smp.losses.SoftBCE(smooth_factor=0.005)",
+    "description": f"{expname}: Contrails segmentation baseline with cls_head",
     "seed": 42,
     # -- Model
     "arch": "UNet",
@@ -38,6 +38,8 @@ config = {
     "loss_params": {
         "smooth_factor": 0.00,
     },
+    "cls_weight": 0.1,
+    "aux_params": {"classes": 1, "dropout": 0.5},
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 1e-4,
