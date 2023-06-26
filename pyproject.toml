@@ -38,6 +38,7 @@ dev-dependencies = [
     "isort~=5.12.0",
     "wandb~=0.15.4",
     "typer[all]~=0.9.0",
+    "mypy>=1.4.1",
 ]
 
 [tool.hatch.metadata]

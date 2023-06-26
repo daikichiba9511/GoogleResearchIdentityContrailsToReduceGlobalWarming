@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Callable, Literal, TypeAlias
 
+import segmentation_models_pytorch as smp
 import torch
 import torch.nn as nn
 from typing_extensions import assert_never
@@ -12,12 +13,13 @@ __all__ = [
     "get_loss",
 ]
 
-LossTypeStr: TypeAlias = Literal["bce"]
+LossTypeStr: TypeAlias = Literal["bce", "soft_bce"]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
 
 class LossType(str, Enum):
     BCE = "bce"
+    SoftBCE = "soft_bce"
 
 
 def get_loss(
@@ -32,6 +34,13 @@ def get_loss(
                 return loss
             else:
                 loss = nn.BCEWithLogitsLoss()
+                return loss
+        case LossType.SoftBCE:
+            if loss_params is not None:
+                loss = smp.losses.SoftBCEWithLogitsLoss(**loss_params)
+                return loss
+            else:
+                loss = smp.losses.SoftBCEWithLogitsLoss()
                 return loss
         case _:
             assert_never(loss_type)
