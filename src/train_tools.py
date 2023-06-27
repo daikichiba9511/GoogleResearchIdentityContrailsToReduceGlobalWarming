@@ -339,7 +339,7 @@ class FreezeParams:
     freeze_keys: list[str]
 
 
-TrainAssets = namedtuple("TrainAssets", ["loss"])
+TrainAssets = namedtuple("TrainAssets", ["loss", "cls_acc"])
 
 
 def train_one_epoch(
@@ -378,6 +378,8 @@ def train_one_epoch(
     is_frozen = False
 
     running_losses = AverageMeter(name="train_loss")
+    if aux_params is not None:
+        running_cls_accs = AverageMeter(name="train_cls_acc")
     with tqdm(
         enumerate(train_loader),
         total=len(train_loader),
@@ -480,7 +482,9 @@ def train_one_epoch(
                 }
 
                 if aux_params is not None:
-                    acc = (cls_logits1 == target_cls).sum().item() / batch_size
+                    cls_pred = (cls_logits1 > 0.5).long()
+                    acc = (cls_pred == target_cls).sum().item() / batch_size
+                    running_cls_accs.update(value=acc, n=batch_size)
                     log_assets.update(
                         {
                             "cls_loss": f"{loss_cls.item():.4f}",
@@ -490,14 +494,17 @@ def train_one_epoch(
                     wandb_log_assets.update(
                         {
                             f"train/fold{fold}_cls_loss": loss_cls.item(),
-                            f"train/fold{fold}_cls_acc": f"{acc:.4f}",
+                            f"train/fold{fold}_cls_acc": running_cls_accs.avg,
                         }
                     )
 
                 pbar.set_postfix(log_assets)
                 wandb.log(wandb_log_assets)
 
-    train_assets = TrainAssets(loss=running_losses.avg)
+    train_assets = TrainAssets(
+        loss=running_losses.avg,
+        cls_acc=running_cls_accs.avg,
+    )
     return train_assets
 
 
@@ -618,8 +625,8 @@ def valid_one_epoch(
                 )
                 valid_wandb_log_assets.update(
                     {
-                        f"fold{fold}_cls_valid_loss": loss_cls.item(),
-                        f"fold{fold}_cls_acc": accs,
+                        f"valid/fold{fold}_cls_loss": loss_cls.item(),
+                        f"valid/fold{fold}_cls_acc": accs,
                     }
                 )
 

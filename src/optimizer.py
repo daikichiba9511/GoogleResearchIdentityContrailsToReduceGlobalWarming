@@ -22,7 +22,7 @@ class OptimizerType(str, Enum):
 
 def get_optimizer(
     optimizer_type: OptimizerTypeStr | OptimizerType,
-    optimizer_params: dict[str, object],
+    optimizer_params: dict[str, int | float],
     model: nn.Module,
 ) -> optim.Optimizer:
     """Get optimizer

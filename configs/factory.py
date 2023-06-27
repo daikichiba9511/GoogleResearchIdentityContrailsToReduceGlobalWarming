@@ -59,7 +59,7 @@ class Config:
     threshold: float
 
 
-def init_config(config_cls: T, config_path: str) -> T:
+def init_config(config_cls: type[T], config_path: str) -> T:
     """Load config from config_path and initialize config_cls
 
     Args:

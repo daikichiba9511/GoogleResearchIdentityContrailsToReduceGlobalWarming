@@ -51,19 +51,24 @@ def make_df(data_root_path: Path, image_root_path: Path, phase: str) -> pd.DataF
     return df
 
 
-def get_dfs(config: Config) -> tuple[pd.DataFrame, pd.DataFrame]:
+def get_dfs(config: Config, fold: int) -> tuple[pd.DataFrame, pd.DataFrame]:
     train_path = valid_path = str(config.data_root_path / "contrails") + "/"
     # train_path = config.data_root_path / "train"
     # valid_path = config.data_root_path / "validation"
-    train_df = pd.read_csv(config.data_root_path / "train_df.csv")
-    train_df["path"] = train_path + train_df["record_id"].astype(str) + ".npy"
-    valid_df = pd.read_csv(config.data_root_path / "valid_df.csv")
-    valid_df["path"] = valid_path + valid_df["record_id"].astype(str) + ".npy"
+    # train_df = pd.read_csv(config.data_root_path / "train_df.csv")
+    # train_df["path"] = train_path + train_df["record_id"].astype(str) + ".npy"
+    # valid_df = pd.read_csv(config.data_root_path / "valid_df.csv")
+    # valid_df["path"] = valid_path + valid_df["record_id"].astype(str) + ".npy"
+
+    # df.csv is made by scripts/make_fold.py
+    df = pd.read_csv(config.data_root_path / "df.csv")
+    train_df = df[df["fold"] != fold].reset_index(drop=True)
+    valid_df = df[df["fold"] == fold].reset_index(drop=True)
     return train_df, valid_df
 
 
 def get_loaders(
-    config: Config, remake_df: bool, debug: bool
+    config: Config, remake_df: bool, debug: bool, fold: int
 ) -> tuple[DataLoader, DataLoader]:
     if remake_df:
         train_df = make_df(
@@ -73,7 +78,7 @@ def get_loaders(
             config.data_root_path, config.data_root_path / "validation", "validation"
         )
     else:
-        train_df, valid_df = get_dfs(config)
+        train_df, valid_df = get_dfs(config, fold=fold)
 
     num_workers = mp.cpu_count()
     if debug:
@@ -126,7 +131,7 @@ def main(
     log_file_path = config.output_dir / f"train-{TODAY}-{uid}.log"
     add_file_handler(logger, log_file_path)
 
-    train_fold = list(config.n_splits) if all else [0]
+    train_fold = list(range(config.n_splits)) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = True
 
@@ -150,7 +155,7 @@ def main(
         logger.info(f"## Fold: {fold} ##")
 
         train_loader, valid_loader = get_loaders(
-            config, remake_df=remake_df, debug=debug
+            config, remake_df=remake_df, debug=debug, fold=fold
         )
         model = ContrailsModel(
             encoder_name=config.encoder_name,
@@ -163,12 +168,15 @@ def main(
             optimizer_params=config.optimizer_params,
             model=model,
         )
+
         if config.scheduler_type == SchedulerType.CosineWithWarmup:
-            scheduler_params = {
+            scheduler_params: dict[str, int | float] = {
                 "num_warmup_steps": int(
-                    len(train_loader) * config.scheduler_params["warmup_step_ratio"]
+                    config.scheduler_params["warmup_step_ratio"]
+                    * (len(train_loader) // config.train_batch_size)
                 ),
-                "num_training_steps": len(train_loader) // config.train_batch_size,
+                "num_training_steps": 1
+                * (len(train_loader) // config.train_batch_size),
             }
         else:
             scheduler_params = config.scheduler_params
@@ -215,6 +223,7 @@ def main(
 
             logging_assets = {
                 "train/avg_loss": train_assets.loss,
+                "train/avg_cls_acc": train_assets.cls_acc,
                 "valid/avg_loss": valid_assets.loss,
                 "valid/avg_dice": valid_assets.dice,
             }

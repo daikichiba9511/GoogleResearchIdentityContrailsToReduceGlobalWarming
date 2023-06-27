@@ -13,11 +13,23 @@ def dice(pred: np.ndarray, mask: np.ndarray) -> float:
     return dice.item()
 
 
-def calc_metrics(preds: torch.Tensor, target: torch.Tensor) -> dict[str, float]:
-    dice_coef = dice(preds, target)
+def dice_coef(
+    preds: np.ndarray, target: np.ndarray, thr: float = 0.5, eps: float = 1e-7
+) -> float:
+    target = target.astype(np.float32).flatten()
+    preds = (preds > thr).astype(np.float32).flatten()
+    intersection = np.sum(preds * target)
+    union = np.sum(preds) + np.sum(target)
+    dice = (2.0 * intersection + eps) / (union + eps)
+    return dice
+
+
+def calc_metrics(preds: np.ndarray, target: np.ndarray) -> dict[str, float]:
+    # dice_coef = dice(preds, target)
+    dice_coef_value = dice_coef(preds, target, thr=0.5, eps=1e-7)
 
     metrics = {
-        "dice": dice_coef,
+        "dice": dice_coef_value,
     }
     return metrics
 

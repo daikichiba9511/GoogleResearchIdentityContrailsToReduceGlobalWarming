@@ -5,13 +5,13 @@ expname = __file__.split("/")[-1].split(".")[0]
 
 config = {
     "expname": expname,
-    "description": f"{expname}: Contrails segmentation baseline with cls_head",
+    "description": f"{expname}: encoder timm-resnet26d trained with dice loss with label smoothing",
     "seed": 42,
     # -- Model
     "arch": "UNet",
-    "encoder_name": "efficientnet-b0",
+    "encoder_name": "timm-resnest26d",  # 15M
     "encoder_weight": "imagenet",
-    "checkpoints": ["./output/exp003/exp003-UNet-resnet18-fold0.pth"],
+    "checkpoints": ["./output/exp004/exp004-UNet-timm-resnet26d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
         # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
@@ -34,10 +34,8 @@ config = {
         "epochs": 10,
     },
     "patience": 5,
-    "loss_type": "soft_bce",
-    "loss_params": {
-        "smooth_factor": 0.00,
-    },
+    "loss_type": "dice",
+    "loss_params": {"smooth": 1.0, "mode": "binary"},
     "cls_weight": 0.01,
     "aux_params": {"classes": 1, "dropout": 0.3},
     "optimizer_type": "adamw",
@@ -47,7 +45,7 @@ config = {
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
-        "warmup_step_ratio": 0.001,
+        "warmup_step_ratio": 0.1,
     },
     # -- Inference
     "test_batch_size": 32,
