@@ -45,7 +45,9 @@ class ContrailsDataset(Dataset):
             self.normalize_image = normalize_fn
 
         if image_size != 256:
-            self.resize_image = T.transforms.Resize((image_size, image_size))
+            self.resize_image = T.transforms.Resize(
+                (image_size, image_size), antialias=True
+            )
         else:
             self.resize_image = None
 
@@ -101,7 +103,7 @@ class ContrailsDataset(Dataset):
             )
             label = torch.tensor(np.reshape(label, (256, 256)))
 
-            if self.image_size != 256 and self.resize_image_fn is not None:
+            if self.image_size != 256 and self.resize_image is not None:
                 image = self.resize_image(image)
 
             image = self.normalize_image(image)
@@ -115,7 +117,7 @@ class ContrailsDataset(Dataset):
             )
             image_id = self.df.iloc[index]["record_id"]
             image_id = torch.tensor(int(image_id))
-            if self.image_size != 256 and self.resize_image_fn is not None:
+            if self.image_size != 256 and self.resize_image is not None:
                 image = self.resize_image(image)
 
             image = self.normalize_image(image)

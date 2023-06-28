@@ -25,8 +25,8 @@ def dice_coef(
 
 
 def calc_metrics(preds: np.ndarray, target: np.ndarray) -> dict[str, float]:
-    # dice_coef = dice(preds, target)
-    dice_coef_value = dice_coef(preds, target, thr=0.5, eps=1e-7)
+    dice_coef_value = dice(preds, target)
+    # dice_coef_value = dice_coef(preds, target, thr=0.5, eps=1e-7)
 
     metrics = {
         "dice": dice_coef_value,

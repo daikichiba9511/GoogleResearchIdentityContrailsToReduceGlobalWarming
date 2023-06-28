@@ -4,7 +4,7 @@ from collections import namedtuple
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
-from typing import Callable, Iterable, Protocol
+from typing import Any, Callable, Iterable, Protocol
 
 import numpy as np
 import torch
@@ -92,8 +92,8 @@ class AWP:
         self.adv_eps = adv_eps
         self.start_epoch = start_epoch
         self.adv_step = adv_step
-        self.backup = {}
-        self.backup_eps = {}
+        self.backup: dict[str, torch.Tensor] = {}
+        self.backup_eps: dict[str, Any] = {}
         self.scaler = scaler
         self.criterion = criterion
         self.enable_autocast = scaler is not None
@@ -391,7 +391,7 @@ def train_one_epoch(
 
             if (
                 aug_params is not None
-                and aug_params.cutmix
+                and aug_params.do_cutmix
                 and np.random.rand() <= aug_params.cutmix_prob
             ):
                 images, target, _, _ = mixup(
@@ -400,7 +400,7 @@ def train_one_epoch(
 
             if (
                 aug_params is not None
-                and aug_params.mixup
+                and aug_params.do_mixup
                 and np.random.rand() <= aug_params.mixup_prob
             ):
                 images, target, _, _ = cutmix(
@@ -409,7 +409,7 @@ def train_one_epoch(
 
             if (
                 aug_params is not None
-                and aug_params.label_noise
+                and aug_params.do_label_noise
                 and np.random.rand() <= aug_params.label_noise_prob
             ):
                 images, target, _ = label_noise(images, target)
@@ -466,7 +466,7 @@ def train_one_epoch(
                 optimizer.zero_grad(set_to_none=True)
 
                 if schedule_per_step:
-                    scheduler_step(scheduler, loss=loss)
+                    scheduler_step(scheduler, loss=loss.item())
 
                 log_assets = {
                     "fold": f"{fold}",
@@ -501,6 +501,11 @@ def train_one_epoch(
                 pbar.set_postfix(log_assets)
                 wandb.log(wandb_log_assets)
 
+    if aug_params is None:
+        return TrainAssets(
+            loss=running_losses.avg,
+            cls_acc=None,
+        )
     train_assets = TrainAssets(
         loss=running_losses.avg,
         cls_acc=running_cls_accs.avg,
@@ -570,8 +575,20 @@ def valid_one_epoch(
 
             # make a whole image prediction
             # y_preds: (N, H, W), target: (N, H, W)
-            y_preds = torch.sigmoid(logits).to("cpu").detach().numpy()
-            target = target.to("cpu").detach().numpy()
+            y_preds = torch.sigmoid(logits).to("cpu").detach()
+            target: torch.Tensor = target.to("cpu").detach()
+
+            if y_preds.shape[1:] == (256, 256):
+                y_preds = F.interpolate(
+                    y_preds.unsqueeze(1).float(), size=256, mode="bilinear"
+                ).squeeze(1)
+            if target.shape[1:] == (256, 256):
+                target = F.interpolate(
+                    target.unsqueeze(1).float(), size=256, mode="bilinear"
+                ).squeeze(1)
+
+            y_preds = y_preds.numpy()
+            target = target.numpy()
 
             valid_metrics = metrics_fn(target=target, preds=y_preds)
 

@@ -1,9 +1,12 @@
 #!/bin/bash
 set -e
 
-SRC_NAME="exp003"
+# SRC_NAME="exp003" # 6/27
+SRC_NAME="exp004" # 6/28
 
 ls "./output/${SRC_NAME}"
+rm -rf ./output/sub/*.pth
+ls "./output/sub"
 echo "Version: ${SRC_NAME}" >./output/sub/version.txt
 cp -R ./output/${SRC_NAME}/${SRC_NAME}-*.pth ./output/sub/
 

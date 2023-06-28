@@ -129,7 +129,7 @@ def main(
 
     uid = str(uuid.uuid4())[:8]
     log_file_path = config.output_dir / f"train-{TODAY}-{uid}.log"
-    add_file_handler(logger, log_file_path)
+    add_file_handler(logger, str(log_file_path))
 
     train_fold = list(range(config.n_splits)) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -175,7 +175,7 @@ def main(
                     config.scheduler_params["warmup_step_ratio"]
                     * (len(train_loader) // config.train_batch_size)
                 ),
-                "num_training_steps": 1
+                "num_training_steps": config.epochs
                 * (len(train_loader) // config.train_batch_size),
             }
         else:
@@ -190,6 +190,9 @@ def main(
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         earlystopping = EarlyStopping(
             patience=config.patience, save_dir=config.output_dir, verbose=True
+        )
+        aux_params = (
+            AuxParams(cls_weight=config.cls_weight) if config.cls_weight else None
         )
 
         for epoch in range(config.epochs):
@@ -206,7 +209,7 @@ def main(
                 device=device,
                 use_amp=use_amp,
                 criterion_cls=cls_loss,
-                aux_params=AuxParams(cls_weight=config.cls_weight),
+                aux_params=aux_params,
             )
             valid_assets = valid_one_epoch(
                 fold=fold,
@@ -238,7 +241,9 @@ def main(
                 logger.info("Early stopping")
                 break
 
-        save_path = f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}-epoch{epoch}.pth"
+        save_path = (
+            f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
+        )
         earlystopping.save_checkpoint(
             float("inf"), model, config.output_dir / save_path
         )

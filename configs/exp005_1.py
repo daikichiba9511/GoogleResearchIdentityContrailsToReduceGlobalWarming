@@ -5,13 +5,13 @@ expname = __file__.split("/")[-1].split(".")[0]
 
 config = {
     "expname": expname,
-    "description": f"{expname}: encoder timm-resnet26d trained with dice loss with label smoothing",
+    "description": f"{expname}: encoder timm-resnet26d (cls_weight=0)",
     "seed": 42,
     # -- Model
     "arch": "UNet",
     "encoder_name": "timm-resnest26d",  # 15M
     "encoder_weight": "imagenet",
-    "checkpoints": ["./output/exp004/exp004-UNet-timm-resnest26d-fold0.pth"],
+    "checkpoints": ["./output/exp005/exp005-UNet-timm-resnest26d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
         # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
@@ -23,7 +23,7 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
-    "image_size": 256,
+    "image_size": 512,
     "n_splits": 5,
     # -- Training
     "train_batch_size": 32,
@@ -36,7 +36,7 @@ config = {
     "patience": 8,
     "loss_type": "dice",
     "loss_params": {"smooth": 1.0, "mode": "binary"},
-    "cls_weight": 0.01,
+    "cls_weight": None,
     "aux_params": {"classes": 1, "dropout": 0.3},
     "optimizer_type": "adamw",
     "optimizer_params": {

@@ -13,7 +13,7 @@ __all__ = [
     "get_loss",
 ]
 
-LossTypeStr: TypeAlias = Literal["bce", "soft_bce", "dice"]
+LossTypeStr: TypeAlias = Literal["bce", "soft_bce", "dice", "dice_global"]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
 
@@ -21,6 +21,21 @@ class LossType(str, Enum):
     BCE = "bce"
     SoftBCE = "soft_bce"
     Dice = "dice"
+    DiceGlobal = "dice_global"
+
+
+class DiceGlobalLoss(nn.Module):
+    def __init__(self, smooth: float = 1e-3):
+        super().__init__()
+        self.smooth = smooth
+
+    def __call__(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        intersection = torch.sum(pred * target)
+        union = torch.sum(pred) + torch.sum(target)
+
+        dice = (2.0 * intersection + self.smooth) / (union + self.smooth)
+
+        return 1 - dice
 
 
 def get_loss(
@@ -41,6 +56,10 @@ def get_loss(
             if loss_params is None:
                 return smp.losses.DiceLoss()
             return smp.losses.DiceLoss(**loss_params)
+        case LossType.DiceGlobal:
+            if loss_params is None:
+                return DiceGlobalLoss()
+            return DiceGlobalLoss(**loss_params)
         case _:
             assert_never(loss_type)
 

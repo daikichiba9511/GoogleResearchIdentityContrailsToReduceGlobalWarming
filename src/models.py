@@ -25,9 +25,15 @@ class ContrailsModel(nn.Module):
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         logits, cls_logits = self.model(images)
 
+        if logits.shape[1] != 256:
+            logits = nn.functional.interpolate(
+                logits, size=(256, 256), mode="bilinear", align_corners=False
+            )
+        logits = logits.squeeze(1)
+
         # logist: (batch_size, height, width)
         outputs = {
-            "logits": logits.squeeze(1),
+            "logits": logits,
             "cls_logits": cls_logits.reshape(-1),
         }
         return outputs
