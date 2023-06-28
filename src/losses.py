@@ -4,6 +4,7 @@ from typing import Any, Callable, Literal, TypeAlias
 import segmentation_models_pytorch as smp
 import torch
 import torch.nn as nn
+from torch.nn.modules.loss import _Loss
 from typing_extensions import assert_never
 
 __all__ = [
@@ -13,7 +14,7 @@ __all__ = [
     "get_loss",
 ]
 
-LossTypeStr: TypeAlias = Literal["bce", "soft_bce", "dice", "dice_global"]
+LossTypeStr: TypeAlias = Literal["bce", "soft_bce", "dice", "dice_global", "bce_dice"]
 LossFn: TypeAlias = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 
 
@@ -22,9 +23,10 @@ class LossType(str, Enum):
     SoftBCE = "soft_bce"
     Dice = "dice"
     DiceGlobal = "dice_global"
+    BCEDice = "bce_dice"
 
 
-class DiceGlobalLoss(nn.Module):
+class DiceGlobalLoss(_Loss):
     def __init__(self, smooth: float = 1e-3):
         super().__init__()
         self.smooth = smooth
@@ -36,6 +38,27 @@ class DiceGlobalLoss(nn.Module):
         dice = (2.0 * intersection + self.smooth) / (union + self.smooth)
 
         return 1 - dice
+
+
+class BCEDiceLoss(_Loss):
+    def __init__(
+        self,
+        bce_weight: float | None = None,
+        bce_smooth: float | None = None,
+        dice_smooth: float = 0.0,
+    ) -> None:
+        super().__init__()
+        self.bce_weight = bce_weight
+        self._bce = smp.losses.SoftBCEWithLogitsLoss(smooth_factor=bce_smooth)
+        self._dice = smp.losses.DiceLoss(mode="binary", smooth=dice_smooth)
+
+    def __call__(self, pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        if self.bce_weight is None:
+            return self._bce(pred, target) + self._dice(pred, target)
+
+        return self.bce_weight * self._bce(pred, target) + (
+            1 - self.bce_weight
+        ) * self._dice(pred, target)
 
 
 def get_loss(
@@ -60,6 +83,10 @@ def get_loss(
             if loss_params is None:
                 return DiceGlobalLoss()
             return DiceGlobalLoss(**loss_params)
+        case LossType.BCEDice:
+            if loss_params is None:
+                return BCEDiceLoss()
+            return BCEDiceLoss(**loss_params)
         case _:
             assert_never(loss_type)
 
