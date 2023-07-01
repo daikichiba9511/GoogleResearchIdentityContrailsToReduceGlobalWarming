@@ -2,7 +2,8 @@
 set -e
 
 # SRC_NAME="exp003" # 6/27
-SRC_NAME="exp004" # 6/28
+# SRC_NAME="exp004" # 6/28
+SRC_NAME="exp005" # 6/29
 
 ls "./output/${SRC_NAME}"
 rm -rf ./output/sub/*.pth

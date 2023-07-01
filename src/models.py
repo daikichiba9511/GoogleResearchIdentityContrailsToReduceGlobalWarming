@@ -11,9 +11,11 @@ class ContrailsModel(nn.Module):
         encoder_name: str,
         encoder_weight: str | None = None,
         aux_params: dict[str, Any] | None = None,
+        arch: str = "Unet",
     ) -> None:
         super().__init__()
-        self.model = smp.Unet(
+        self.model = smp.create_model(
+            arch=arch,
             encoder_name=encoder_name,
             encoder_weights=encoder_weight,
             in_channels=3,
@@ -23,7 +25,13 @@ class ContrailsModel(nn.Module):
         )
 
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
-        logits, cls_logits = self.model(images)
+        outputs = self.model(images)
+        if isinstance(outputs, tuple):
+            logits, cls_logits = outputs
+            cls_logits = cls_logits.reshape(-1)
+        else:
+            logits = outputs
+            cls_logits = None
 
         if logits.shape[1] != 256:
             logits = nn.functional.interpolate(
@@ -34,6 +42,6 @@ class ContrailsModel(nn.Module):
         # logist: (batch_size, height, width)
         outputs = {
             "logits": logits,
-            "cls_logits": cls_logits.reshape(-1),
+            "cls_logits": cls_logits,
         }
         return outputs

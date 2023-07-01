@@ -1,10 +1,10 @@
 import importlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
-from pprint import pformat
 from typing import TypeVar
 
+from src.losses import LossType, LossTypeStr
 from src.optimizer import OptimizerType, OptimizerTypeStr
 from src.scheduler import SchedulerType, SchedulerTypeStr
 
@@ -45,7 +45,10 @@ class Config:
     epochs: int
     patience: int
 
-    loss_type: str
+    resume_training: bool
+    positive_only: bool
+
+    loss_type: LossType | LossTypeStr
     loss_params: dict[str, int | float]
 
     optimizer_type: OptimizerTypeStr | OptimizerType

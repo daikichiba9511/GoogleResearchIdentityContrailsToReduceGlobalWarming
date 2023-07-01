@@ -62,13 +62,14 @@ def get_dfs(config: Config, fold: int) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     # df.csv is made by scripts/make_fold.py
     df = pd.read_csv(config.data_root_path / "df.csv")
+    print(df)
     train_df = df[df["fold"] != fold].reset_index(drop=True)
     valid_df = df[df["fold"] == fold].reset_index(drop=True)
     return train_df, valid_df
 
 
 def get_loaders(
-    config: Config, remake_df: bool, debug: bool, fold: int
+    config: Config, remake_df: bool, debug: bool, fold: int, positive_only: bool = False
 ) -> tuple[DataLoader, DataLoader]:
     if remake_df:
         train_df = make_df(
@@ -77,6 +78,11 @@ def get_loaders(
         valid_df = make_df(
             config.data_root_path, config.data_root_path / "validation", "validation"
         )
+    elif positive_only:
+        df = pd.read_csv(config.data_root_path / "df.csv")
+        print(df)
+        train_df = df.query("cls_label == 1 and fold != @fold").reset_index(drop=True)
+        valid_df = df.query("cls_label == 1 and fold == @fold").reset_index(drop=True)
     else:
         train_df, valid_df = get_dfs(config, fold=fold)
 
@@ -122,14 +128,15 @@ def main(
         remake_df: If True, remake dataframe
     """
     config_path = f"configs.{exp_ver}"
-    logger.info(f"config_path: {config_path}")
     config: Config = init_config(Config, config_path)
-    logger.info(f"{config.__dict__}")
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     uid = str(uuid.uuid4())[:8]
     log_file_path = config.output_dir / f"train-{TODAY}-{uid}.log"
     add_file_handler(logger, str(log_file_path))
+
+    logger.info(f"config_path: {config_path}")
+    logger.info(f"{config.__dict__}")
 
     train_fold = list(range(config.n_splits)) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -155,27 +162,41 @@ def main(
         logger.info(f"## Fold: {fold} ##")
 
         train_loader, valid_loader = get_loaders(
-            config, remake_df=remake_df, debug=debug, fold=fold
+            config,
+            remake_df=remake_df,
+            debug=debug,
+            fold=fold,
+            positive_only=config.positive_only,
         )
         model = ContrailsModel(
             encoder_name=config.encoder_name,
             encoder_weight=config.encoder_weight,
             aux_params=config.aux_params,
+            arch=config.arch,
         )
         model = model.to(device=device)
+        if config.resume_training:
+            resume_path = (
+                config.output_dir
+                / f"{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
+            )
+            model.load_state_dict(torch.load(resume_path))
+
         optimizer = get_optimizer(
             optimizer_type=config.optimizer_type,
             optimizer_params=config.optimizer_params,
             model=model,
         )
 
-        if config.scheduler_type == SchedulerType.CosineWithWarmup:
+        if SchedulerType(config.scheduler_type) == SchedulerType.CosineWithWarmup:
+            # num_times = config.epochs
+            num_times = 1
             scheduler_params: dict[str, int | float] = {
                 "num_warmup_steps": int(
                     config.scheduler_params["warmup_step_ratio"]
                     * (len(train_loader) // config.train_batch_size)
                 ),
-                "num_training_steps": config.epochs
+                "num_training_steps": num_times
                 * (len(train_loader) // config.train_batch_size),
             }
         else:
@@ -189,7 +210,10 @@ def main(
         cls_loss = torch.nn.BCEWithLogitsLoss()
         scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
         earlystopping = EarlyStopping(
-            patience=config.patience, save_dir=config.output_dir, verbose=True
+            patience=config.patience,
+            save_dir=config.output_dir,
+            verbose=True,
+            logger_fn=logger.info,
         )
         aux_params = (
             AuxParams(cls_weight=config.cls_weight) if config.cls_weight else None
