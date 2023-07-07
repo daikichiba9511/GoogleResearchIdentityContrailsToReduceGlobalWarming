@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 
+import albumentations as A
 import pandas as pd
 import torch
 import typer
@@ -52,7 +53,7 @@ def make_df(data_root_path: Path, image_root_path: Path, phase: str) -> pd.DataF
 
 
 def get_dfs(config: Config, fold: int) -> tuple[pd.DataFrame, pd.DataFrame]:
-    train_path = valid_path = str(config.data_root_path / "contrails") + "/"
+    # train_path = valid_path = str(config.data_root_path / "contrails") + "/"
     # train_path = config.data_root_path / "train"
     # valid_path = config.data_root_path / "validation"
     # train_df = pd.read_csv(config.data_root_path / "train_df.csv")
@@ -82,7 +83,8 @@ def get_loaders(
         df = pd.read_csv(config.data_root_path / "df.csv")
         print(df)
         train_df = df.query("cls_label == 1 and fold != @fold").reset_index(drop=True)
-        valid_df = df.query("cls_label == 1 and fold == @fold").reset_index(drop=True)
+        # valid_df = df.query("cls_label == 1 and fold == @fold").reset_index(drop=True)
+        valid_df = df.query("fold == @fold").reset_index(drop=True)
     else:
         train_df, valid_df = get_dfs(config, fold=fold)
 
@@ -92,11 +94,14 @@ def get_loaders(
         valid_df = valid_df.sample(n=100, random_state=0)
         num_workers = 1
 
+    train_aug = A.Compose(config.train_aug_list)
+    valid_aug = A.Compose(config.valid_aug_list)
+
     train_dataset = ContrailsDataset(
-        df=train_df, image_size=config.image_size, train=True
+        df=train_df, image_size=config.image_size, train=True, transform_fn=train_aug
     )
     valid_dataset = ContrailsDataset(
-        df=valid_df, image_size=config.image_size, train=True
+        df=valid_df, image_size=config.image_size, train=True, transform_fn=valid_aug
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -176,11 +181,12 @@ def main(
         )
         model = model.to(device=device)
         if config.resume_training:
-            resume_path = (
-                config.output_dir
-                / f"{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
+            resume_path = config.resume_path.format(fold=fold)
+            logger.info(
+                f"Resume training from {resume_path} with {config.positive_only = }"
             )
-            model.load_state_dict(torch.load(resume_path))
+            state = torch.load(resume_path)
+            model.load_state_dict(state)
 
         optimizer = get_optimizer(
             optimizer_type=config.optimizer_type,
