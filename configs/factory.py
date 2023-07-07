@@ -1,4 +1,5 @@
 import importlib
+from collections.abc import Callable
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
@@ -46,6 +47,7 @@ class Config:
     patience: int
 
     resume_training: bool
+    resume_path: str
     positive_only: bool
 
     loss_type: LossType | LossTypeStr
@@ -56,6 +58,10 @@ class Config:
 
     scheduler_type: SchedulerTypeStr | SchedulerType
     scheduler_params: dict[str, int | float]
+
+    train_aug_list: list[Callable]
+    valid_aug_list: list[Callable]
+    test_aug_list: list[Callable]
 
     # -- Inference
     test_batch_size: int

@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
+import albumentations as A
 import numpy as np
 import pandas as pd
 import torch
@@ -32,15 +33,17 @@ class ContrailsDataset(Dataset):
         image_size: int = 224,
         train: bool = True,
         normalize_fn: Callable | None = None,
+        transform_fn: Callable | None = None,
     ) -> None:
         self.df = df
         self.image_size = image_size
         self.is_train = train
 
         if normalize_fn is None:
-            self.normalize_image = T.Normalize(
-                (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
-            )
+            # self.normalize_image = T.Normalize(
+            #     (0.485, 0.456, 0.406), (0.229, 0.224, 0.225)
+            # )
+            self.normalize_image = A.Normalize()
         else:
             self.normalize_image = normalize_fn
 
@@ -50,6 +53,8 @@ class ContrailsDataset(Dataset):
             )
         else:
             self.resize_image = None
+
+        self.transform_fn = transform_fn
 
     def read_record(
         self, dir: Path, load_band_files: list[str] = ["band_11", "band_14", "band_15"]
@@ -79,7 +84,8 @@ class ContrailsDataset(Dataset):
         )
         b = self.normalize_range(record_data["band_14"], _t11_bounds)
 
-        face_color = np.clip(np.stack([r, g, b], axis=2), 0, 1)
+        face_color: np.ndarray = np.clip(np.stack([r, g, b], axis=2), 0, 1)
+        # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
         image = face_color[..., n_times_before]
         return image
 
@@ -98,29 +104,42 @@ class ContrailsDataset(Dataset):
             # shape: (T, 256, 256)
             # print(image.shape)
             # print(label.shape)
-            image = (
-                torch.tensor(np.reshape(image, (256, 256, 3))).float().permute(2, 0, 1)
-            )
-            label = torch.tensor(np.reshape(label, (256, 256)))
+            # image = (
+            #     torch.tensor(np.reshape(image, (256, 256, 3))).float().permute(2, 0, 1)
+            # )
+            # label = torch.tensor(np.reshape(label, (256, 256)))
+            image = np.reshape(image, (256, 256, 3)).astype(np.float32)
+            label = np.reshape(label, (256, 256)).astype(np.float32)
 
-            if self.image_size != 256 and self.resize_image is not None:
-                image = self.resize_image(image)
+            if self.transform_fn is not None:
+                augmented = self.transform_fn(image=image)
+                image = augmented["image"]
+                # label = augmented["mask"]
+            else:
+                image = torch.tensor(image).float().permute(2, 0, 1)
+                label = torch.tensor(label).float()
 
-            image = self.normalize_image(image)
+            # image = self.normalize_image(image=image)
+            # if self.image_size != 256 and self.resize_image is not None:
+            #     image = self.resize_image(image)
+
             return image, label
         else:
             contrails_image_path = row["path"]
             record_data = self.read_record(contrails_image_path)
             image = self.get_false_color(record_data)
-            image = (
-                torch.tensor(np.reshape(image, (256, 256, 3))).float().permute(2, 0, 1)
-            )
+            image = np.reshape(image, (256, 256, 3)).astype(np.float32)
+            if self.transform_fn is not None:
+                augmented = self.transform_fn(image=image)
+                image = augmented["image"]
+            else:
+                image = torch.tensor(image).float().permute(2, 0, 1)
             image_id = self.df.iloc[index]["record_id"]
             image_id = torch.tensor(int(image_id))
-            if self.image_size != 256 and self.resize_image is not None:
-                image = self.resize_image(image)
+            # if self.image_size != 256 and self.resize_image is not None:
+            #     image = self.resize_image(image)
 
-            image = self.normalize_image(image)
+            # image = self.normalize_image(image)
             return image, image_id
 
     def __len__(self) -> int:
