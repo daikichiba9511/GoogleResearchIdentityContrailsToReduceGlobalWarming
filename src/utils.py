@@ -88,3 +88,23 @@ def plot_preds(
     ax[3].imshow(label)
     ax[3].set_title("Label")
     return fig, ax
+
+
+def plot_preds_with_label_on_image(
+    pred: np.ndarray,
+    image: np.ndarray,
+    label: np.ndarray,
+    figsize: tuple[int, int] = (10, 10),
+) -> tuple:
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    color_label = np.zeros((*label.shape, 3))
+    color_label[label == 1] = (0, 1, 0)
+
+    color_pred = np.zeros((*pred.shape, 3))
+    color_pred[pred > 0.5] = (1, 0, 0)
+
+    ax.imshow(image)
+    ax.imshow(color_pred, alpha=0.5)
+    ax.imshow(color_label, alpha=0.5)
+
+    return fig, ax
