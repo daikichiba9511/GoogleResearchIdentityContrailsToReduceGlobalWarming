@@ -433,8 +433,7 @@ def train_one_epoch(
             with autocast(device_type=device.type, enabled=use_amp):
                 outputs = model(images)
                 logits = outputs["logits"]
-                loss = criterion(logits, target)
-                loss_mask = loss
+                loss_mask = criterion(logits, target)
 
                 if (
                     aux_params is not None
