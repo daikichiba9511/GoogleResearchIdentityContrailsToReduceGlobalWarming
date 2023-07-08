@@ -66,7 +66,7 @@ class ContrailsDataset(Dataset):
 
     def normalize_range(
         self, data: np.ndarray, bounds: tuple[float | int, float | int]
-    ) -> dict[str, np.ndarray]:
+    ) -> np.ndarray:
         return (data - bounds[0]) / (bounds[1] - bounds[0])
 
     def get_false_color(self, record_data: dict[str, np.ndarray]) -> np.ndarray:
@@ -96,50 +96,40 @@ class ContrailsDataset(Dataset):
             # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
             # n_times_before = 4, n_times_after = 3
             contrails_image = np.load(str(contrails_image_path))
-            # print(contrails_image.shape)
-            # TODO: なんで-1をつかってるか調べる
-            image = contrails_image[..., :-1]
-            label = contrails_image[..., -1]
+            raw_image = contrails_image[..., :-1]
+            raw_label = contrails_image[..., -1]
 
-            # shape: (T, 256, 256)
-            # print(image.shape)
-            # print(label.shape)
-            # image = (
-            #     torch.tensor(np.reshape(image, (256, 256, 3))).float().permute(2, 0, 1)
-            # )
-            # label = torch.tensor(np.reshape(label, (256, 256)))
-            image = np.reshape(image, (256, 256, 3)).astype(np.float32)
-            label = np.reshape(label, (256, 256)).astype(np.float32)
+            raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+            raw_label = np.reshape(raw_label, (256, 256)).astype(np.float32)
 
             if self.transform_fn is not None:
-                augmented = self.transform_fn(image=image)
+                augmented = self.transform_fn(image=raw_image, mask=raw_label)
                 image = augmented["image"]
-                # label = augmented["mask"]
+                label = augmented["mask"]
             else:
-                image = torch.tensor(image).float().permute(2, 0, 1)
-                label = torch.tensor(label).float()
+                image = torch.tensor(raw_image).float().permute(2, 0, 1)
+                label = torch.tensor(raw_label).float()
 
-            # image = self.normalize_image(image=image)
-            # if self.image_size != 256 and self.resize_image is not None:
-            #     image = self.resize_image(image)
+            if self.image_size != 256 and self.resize_image is not None:
+                label = self.resize_image(label)
 
             return image, label
+
         else:
             contrails_image_path = row["path"]
             record_data = self.read_record(contrails_image_path)
-            image = self.get_false_color(record_data)
-            image = np.reshape(image, (256, 256, 3)).astype(np.float32)
+            raw_image = self.get_false_color(record_data)
+            raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+
             if self.transform_fn is not None:
-                augmented = self.transform_fn(image=image)
+                augmented = self.transform_fn(image=raw_image)
                 image = augmented["image"]
             else:
-                image = torch.tensor(image).float().permute(2, 0, 1)
+                image = torch.tensor(raw_image).float().permute(2, 0, 1)
+
             image_id = self.df.iloc[index]["record_id"]
             image_id = torch.tensor(int(image_id))
-            # if self.image_size != 256 and self.resize_image is not None:
-            #     image = self.resize_image(image)
 
-            # image = self.normalize_image(image)
             return image, image_id
 
     def __len__(self) -> int:

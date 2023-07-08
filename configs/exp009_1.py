@@ -45,9 +45,9 @@ config = {
     "patience": 8,
     "loss_type": "dice",
     "loss_params": {"smooth": 1.0, "mode": "binary"},
-    "cls_weight": 0.2,
-    # "aux_params": None,
-    "aux_params": {"dropout": 0.5, "classes": 1},
+    "cls_weight": 0.0,
+    "aux_params": None,
+    # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 5e-4,

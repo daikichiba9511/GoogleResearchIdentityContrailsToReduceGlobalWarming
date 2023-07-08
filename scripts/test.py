@@ -39,4 +39,10 @@ def main():
 
 
 if __name__ == "__main__":
+    # import numpy as np
+    #
+    # img = np.load(
+    #     "./input/contrails-images-ash-color/contrails/1000216489776414077.npy"
+    # )
+    # print(img.max(), img.min(), img.shape)
     main()

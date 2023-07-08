@@ -6,6 +6,7 @@ from logging import getLogger
 from pathlib import Path
 from typing import Any, Callable, Iterable, Protocol
 
+import cv2
 import numpy as np
 import torch
 import torch.nn as nn
@@ -432,7 +433,11 @@ def train_one_epoch(
 
             with autocast(device_type=device.type, enabled=use_amp):
                 outputs = model(images)
-                logits = outputs["logits"]
+                logits: torch.Tensor = outputs["logits"]
+                assert (
+                    logits.shape[1:] == target.shape[1:]
+                ), f"{logits.shape = }, {target.shape = }"
+                # assert target.shape[1:] == (256, 256), f"{target.shape = }"
                 loss_mask = criterion(logits, target)
 
                 if (
@@ -500,14 +505,9 @@ def train_one_epoch(
                 pbar.set_postfix(log_assets)
                 wandb.log(wandb_log_assets)
 
-    if aug_params is None:
-        return TrainAssets(
-            loss=running_losses.avg,
-            cls_acc=None,
-        )
     train_assets = TrainAssets(
         loss=running_losses.avg,
-        cls_acc=running_cls_accs.avg,
+        cls_acc=running_cls_accs.avg if aux_params is not None else None,
     )
     return train_assets
 
@@ -515,6 +515,29 @@ def train_one_epoch(
 class MetricsFn(Protocol):
     def __call__(self, preds: np.ndarray, target: np.ndarray) -> dict[str, float | int]:
         ...
+
+
+def remove_tiny_pred(pred_mask: np.ndarray, min_size: int) -> np.ndarray:
+    """Remove tiny predicted mask
+
+    Args:
+        pred_mask (np.ndarray): predicted mask (dtype: np.uint8, shape: (H, W))
+        min_size (int, optional): minimum size of predicted mask. Defaults to 10.
+
+    Returns:
+        np.ndarray: predicted mask
+    """
+    if pred_mask.ndim != 2:
+        raise ValueError(f"{pred_mask.shape = }")
+
+    pred = pred_mask.copy()
+    ret, labels = cv2.connectedComponents(pred_mask)
+    for label in range(1, ret):
+        area = (labels == label).sum()
+        if area < min_size:
+            pred[labels == label] = 0
+
+    return pred
 
 
 ValidAssets = namedtuple("ValidAssets", ["loss", "dice"])
@@ -588,6 +611,10 @@ def valid_one_epoch(
 
             y_preds = y_preds.numpy()
             target = target.numpy()
+
+            # shape: (N, H, W)
+            # preds = (y_preds > 0.5).astype(np.uint8)
+            # preds = np.array([remove_tiny_pred(pred, min_size=30) for pred in preds])
 
             valid_metrics = metrics_fn(target=target, preds=y_preds)
 

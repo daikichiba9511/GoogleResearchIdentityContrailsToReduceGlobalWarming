@@ -278,7 +278,9 @@ def main(
             float("inf"), model, config.output_dir / save_path
         )
         logger.info(f"## Fold: {fold} End ##")
-        run.finish()
+
+        if run is not None:
+            run.finish()
 
         gc.collect()
         torch.cuda.empty_cache()
