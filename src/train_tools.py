@@ -451,7 +451,7 @@ def train_one_epoch(
                     )
                     loss_cls = loss_cls1
                 else:
-                    loss_cls = 0
+                    loss_cls = torch.tensor(0.0)
 
                 loss = loss_mask + loss_cls
                 loss /= grad_accum_step_num

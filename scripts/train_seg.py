@@ -1,4 +1,5 @@
 import gc
+import math
 import multiprocessing as mp
 import os
 import pprint
@@ -21,6 +22,7 @@ from src.models import ContrailsModel
 from src.optimizer import get_optimizer
 from src.scheduler import SchedulerType, get_scheduler
 from src.train_tools import (
+    AugParams,
     AuxParams,
     EarlyStopping,
     scheduler_step,
@@ -194,16 +196,20 @@ def main(
             model=model,
         )
 
+        schedule_per_step = False
         if SchedulerType(config.scheduler_type) == SchedulerType.CosineWithWarmup:
-            # num_times = config.epochs
-            num_times = 1
+            step_num = len(train_loader) // config.train_batch_size if schedule_per_step else 1
+            total_step_num = math.ceil(step_num * max(config.epochs, 1))
+            warmup_step_num = (
+                # math.ceil((total_step_num * 2) / 100)
+                int(config.scheduler_params["warmup_ratio"] * total_step_num)
+                if config.scheduler_params["warmup_ratio"]
+                else 0
+            )
+            logger.info(f"{total_step_num = }, {warmup_step_num = }")
             scheduler_params: dict[str, int | float] = {
-                "num_warmup_steps": int(
-                    config.scheduler_params["warmup_step_ratio"]
-                    * (len(train_loader) // config.train_batch_size)
-                ),
-                "num_training_steps": num_times
-                * (len(train_loader) // config.train_batch_size),
+                "num_warmup_steps": warmup_step_num,
+                "num_training_steps": total_step_num,
             }
         else:
             scheduler_params = config.scheduler_params
@@ -224,6 +230,7 @@ def main(
         aux_params = (
             AuxParams(cls_weight=config.cls_weight) if config.cls_weight else None
         )
+        aug_params = AugParams(**config.aug_params) if config.aug_params else None
 
         for epoch in range(config.epochs):
             seed_everything(config.seed)
@@ -240,6 +247,8 @@ def main(
                 use_amp=use_amp,
                 criterion_cls=cls_loss,
                 aux_params=aux_params,
+                aug_params=aug_params,
+                schedule_per_step=schedule_per_step,
             )
             valid_assets = valid_one_epoch(
                 fold=fold,

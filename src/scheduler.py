@@ -12,12 +12,15 @@ __all__ = [
     "get_scheduler",
 ]
 
-SchedulerTypeStr: TypeAlias = Literal["cosine_with_warmup", "reduce_on_plateau"]
+SchedulerTypeStr: TypeAlias = Literal[
+    "cosine_with_warmup", "reduce_on_plateau", "cosingannealinglr"
+]
 
 
 class SchedulerType(str, Enum):
     CosineWithWarmup = "cosine_with_warmup"
     ReduceOnPlateau = "reduce_on_plateau"
+    CosineAnnealingLR = "cosineannealinglr"
 
 
 def get_scheduler(
@@ -37,6 +40,11 @@ def get_scheduler(
                 optimizer=optimizer, **scheduler_params
             )
 
+            return scheduler
+        case SchedulerType.CosineAnnealingLR:
+            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                optimizer=optimizer, **scheduler_params
+            )
             return scheduler
         case _:
             assert_never(scheduler_type)

@@ -16,10 +16,10 @@ config = {
     # -- Model
     "arch": "UNet",
     # ref: https://smp.readthedocs.io/en/latest/encoders.html
-    "encoder_name": "timm-resnest50d",  # 25M
-    # "encoder_name": "timm-resnest101e",  # 46M
+    # "encoder_name": "timm-resnest50d",  # 25M
+    "encoder_name": "timm-resnest200e",  # 68M
     "encoder_weight": "imagenet",
-    "checkpoints": ["./output/exp009_1/exp009_1-UNet-timm-resnest50d-fold0.pth"],
+    "checkpoints": ["./output/exp005/exp005-UNet-timm-resnest26d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
         # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
@@ -34,15 +34,15 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 32,
+    "train_batch_size": 24,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
     "resume_path": "./output/exp009/exp009-UNet-timm-resnest50d-fold0.pth",
     "positive_only": False,
-    "epochs": 30,
+    "epochs": 50,
     "train_params": {},
-    "patience": 8,
+    "patience": 10,
     "loss_type": "dice",
     "loss_params": {"smooth": 1.0, "mode": "binary"},
     "cls_weight": 0.0,
@@ -51,17 +51,16 @@ config = {
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 5e-4,
-        # "weight_decay": 1e-5,
-        "weight_decay": 1e-3,
+        "weight_decay": 1e-5,
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
         "warmup_step_ratio": 0.1,
     },
     "train_aug_list": [
-        # A.RandomResizedCrop(height=512, width=512, scale=(0.9, 1.0), p=1.0),
+        A.RandomResizedCrop(height=512, width=512, scale=(0.9, 1.1), p=1.0),
         # A.CropNonEmptyMaskIfExists(height=512, width=512, p=1.0),
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
+        # A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],

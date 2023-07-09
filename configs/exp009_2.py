@@ -7,19 +7,21 @@ root = "."
 expname = __file__.split("/")[-1].split(".")[0]
 
 # IMG_SIZE = 256
-IMG_SIZE = 256 * 2
+IMG_SIZE = 512
+# IMG_SIZE = 768
+# IMG_SIZE = 1024
 
 config = {
     "expname": expname,
-    "description": f"{expname}: check image size",
+    "description": f"{expname}: resnest101e to check encoder size",
     "seed": 42,
     # -- Model
     "arch": "UNet",
     # ref: https://smp.readthedocs.io/en/latest/encoders.html
-    "encoder_name": "timm-resnest50d",  # 25M
-    # "encoder_name": "timm-resnest101e",  # 46M
+    # "encoder_name": "timm-resnest50d",  # 25M
+    "encoder_name": "timm-resnest101e",  # 46M
     "encoder_weight": "imagenet",
-    "checkpoints": ["./output/exp009_1/exp009_1-UNet-timm-resnest50d-fold0.pth"],
+    "checkpoints": ["./output/exp009_2/exp009_2-UNet-timm-resnest101e-fold0.pth"],
     # -- Data
     "data_root_path": Path(
         # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
@@ -34,7 +36,7 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 32,
+    "train_batch_size": 24,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
@@ -51,8 +53,7 @@ config = {
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 5e-4,
-        # "weight_decay": 1e-5,
-        "weight_decay": 1e-3,
+        "weight_decay": 0.0,
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {

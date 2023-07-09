@@ -62,6 +62,7 @@ class Config:
     train_aug_list: list[Callable]
     valid_aug_list: list[Callable]
     test_aug_list: list[Callable]
+    aug_params: dict[str, float | bool]
 
     # -- Inference
     test_batch_size: int
