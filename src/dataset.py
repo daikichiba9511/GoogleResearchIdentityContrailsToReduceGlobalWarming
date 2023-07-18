@@ -171,7 +171,7 @@ class ClsDataset(Dataset):
         false_color = get_false_color(record_data)
         n_times_before = 4
 
-        imgs, image_ids = [], []
+        imgs, img_ids = [], []
         for i in range(8):
             if i == n_times_before:
                 continue
@@ -186,10 +186,10 @@ class ClsDataset(Dataset):
 
             image_id = str(img_dir.stem) + "_" + str(i)
 
-            image_ids.append(image_id)
+            img_ids.append(image_id)
             imgs.append(image)
 
-        return torch.stack(imgs), image_ids
+        return torch.stack(imgs), img_ids
 
     def __len__(self) -> int:
         return len(self.img_dirs)
@@ -201,6 +201,5 @@ if __name__ == "__main__":
     print(len(img_dirs))
     cls_dataset = ClsDataset(img_dirs=img_dirs)
     print(len(cls_dataset))
-    imgs, image_ids = cls_dataset[0]
-    print(imgs.shape)
-    print(image_ids)
+    batch = cls_dataset[0]
+    print(batch)

@@ -177,6 +177,9 @@ class AverageMeter:
         self.rows: list[float | int] = []
 
     def update(self, value: float | int, n: int = 1) -> None:
+        if value in [np.nan, np.inf, -np.inf, float("inf"), float("-inf")]:
+            logger.info("Skip nan or inf value")
+            return None
         self.value = value
         self.sum += value * n
         self.count += n

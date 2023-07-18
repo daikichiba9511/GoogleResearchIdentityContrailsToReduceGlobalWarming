@@ -61,17 +61,17 @@ config = {
     "train_aug_list": [
         # A.RandomResizedCrop(height=512, width=512, scale=(0.9, 1.0), p=1.0),
         # A.CropNonEmptyMaskIfExists(height=512, width=512, p=1.0),
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
+        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
     "valid_aug_list": [
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
+        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
     "test_aug_list": [
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
+        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],

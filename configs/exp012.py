@@ -7,16 +7,12 @@ root = "."
 expname = __file__.split("/")[-1].split(".")[0]
 
 # IMG_SIZE = 256
-IMG_SIZE = 512
-
+IMG_SIZE = 256 * 2
 
 DESC = f"""
-# exp010
-
-## Purpose
-
-make sure that cutmix works for bigger models with img_size={IMG_SIZE}
-
+# {expname}:
+- infer cls
+- use timm-resnest26d
 """
 
 config = {
@@ -26,14 +22,15 @@ config = {
     # -- Model
     "arch": "UNet",
     # ref: https://smp.readthedocs.io/en/latest/encoders.html
-    # "encoder_name": "timm-resnest50d",  # 25M
-    "encoder_name": "timm-resnest200e",  # 68M
+    # "encoder_name": "timm-resnest26d",  # 16M
+    "encoder_name": "timm-resnest50d",  # 25M
+    # "encoder_name": "timm-resnest200e",  # 68M
     "encoder_weight": "imagenet",
-    "checkpoints": ["./output/exp010/exp010-UNet-timm-resnest200e-fold0.pth"],
+    "checkpoints": ["./output/exp009/exp009-UNet-timm-resnest50d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
-        # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
-        f"{root}/input/contrails-images-ash-color"
+        f"{root}/input/google-research-identify-contrails-reduce-global-warming"
+        # f"{root}/input/contrails-images-ash-color"
     ),
     "train_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/train.csv"
@@ -44,7 +41,7 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 16,
+    "train_batch_size": 4,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
@@ -55,32 +52,32 @@ config = {
     "patience": 10,
     "loss_type": "dice",
     "loss_params": {"smooth": 1.0, "mode": "binary"},
-    "cls_weight": 0.0,
-    "aux_params": None,
-    # "aux_params": {"dropout": 0.5, "classes": 1},
+    "cls_weight": 0.1,
+    # "aux_params": None,
+    "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 5e-4,
-        "weight_decay": 0,
+        "weight_decay": 1e-5,
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
-        "warmup_ratio": 0.02,
+        "warmup_step_ratio": 0.01,
     },
     "train_aug_list": [
         # A.RandomResizedCrop(height=512, width=512, scale=(0.9, 1.1), p=1.0),
         # A.CropNonEmptyMaskIfExists(height=512, width=512, p=1.0),
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE),
+        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
     "valid_aug_list": [
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE),
+        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
     "test_aug_list": [
-        A.Resize(height=IMG_SIZE, width=IMG_SIZE),
+        A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
@@ -95,7 +92,7 @@ config = {
         label_noise_prob=0.5,
     ),
     # -- Inference
-    "test_batch_size": 32,
+    "test_batch_size": 4,
     "threshold": 0.5,
 }
 

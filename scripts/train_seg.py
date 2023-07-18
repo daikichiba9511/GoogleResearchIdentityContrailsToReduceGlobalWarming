@@ -198,7 +198,9 @@ def main(
 
         schedule_per_step = False
         if SchedulerType(config.scheduler_type) == SchedulerType.CosineWithWarmup:
-            step_num = len(train_loader) // config.train_batch_size if schedule_per_step else 1
+            step_num = (
+                len(train_loader) // config.train_batch_size if schedule_per_step else 1
+            )
             total_step_num = math.ceil(step_num * max(config.epochs, 1))
             warmup_step_num = (
                 # math.ceil((total_step_num * 2) / 100)
@@ -249,6 +251,7 @@ def main(
                 aux_params=aux_params,
                 aug_params=aug_params,
                 schedule_per_step=schedule_per_step,
+                max_grad_norm=50,
             )
             valid_assets = valid_one_epoch(
                 fold=fold,
