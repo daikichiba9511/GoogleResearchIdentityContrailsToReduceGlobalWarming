@@ -195,6 +195,44 @@ class ClsDataset(Dataset):
         return len(self.img_dirs)
 
 
+class SegDataset(Dataset):
+    def __init__(
+        self, img_dirs: Sequence[Path], transform_fn: Callable | None = None
+    ) -> None:
+        self.img_dirs = img_dirs
+        self.transform_fn = transform_fn
+
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, list[str]]:
+        img_dir = self.img_dirs[index]
+        record_data = read_record(img_dir)
+        # shape: (256, 256, 3, T), T = n_times_before + n_times_after + 1 = 8
+        false_color = get_false_color(record_data)
+        n_times_before = 4
+
+        imgs, img_ids = [], []
+        for i in range(8):
+            if i == n_times_before:
+                continue
+            raw_image = false_color[..., i]
+            raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+
+            if self.transform_fn is not None:
+                augmented = self.transform_fn(image=raw_image)
+                image = augmented["image"]
+            else:
+                image = torch.tensor(raw_image).float().permute(2, 0, 1)
+
+            image_id = str(img_dir.stem) + "_" + str(i)
+
+            img_ids.append(image_id)
+            imgs.append(image)
+
+        return torch.stack(imgs), img_ids
+
+    def __len__(self) -> int:
+        return len(self.img_dirs)
+
+
 if __name__ == "__main__":
     root = Path("./input/google-research-identify-contrails-reduce-global-warming")
     img_dirs = list((root / "train").glob("*"))[:100]

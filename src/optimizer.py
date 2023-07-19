@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import Literal, TypeAlias
 
+import torch
 import torch.nn as nn
 import torch.optim as optim
 from typing_extensions import assert_never
@@ -18,6 +19,23 @@ class OptimizerType(str, Enum):
     SGD = "sgd"
     Adam = "adam"
     AdamW = "adamw"
+
+
+def get_optimizer_params(
+    model: nn.Module, encoder_lr: float, decorder_lr: float
+) -> list[dict[str, torch.Tensor]]:
+    params = model.named_parameters()
+    encoder_params = list(
+        map(lambda x: x[1], filter(lambda x: "encoder" in x[0], params))
+    )
+    decorder_params = list(
+        map(lambda x: x[1], filter(lambda x: "encoder" not in x[0], params))
+    )
+    optimizer_params = [
+        {"params": encoder_params, "lr": encoder_lr},
+        {"params": decorder_params, "lr": decorder_lr},
+    ]
+    return optimizer_params
 
 
 def get_optimizer(
@@ -39,7 +57,14 @@ def get_optimizer(
         optim.Optimizer: Optimizer
     """
     optimizer_type = OptimizerType(optimizer_type)
-    model_parameters = model.parameters()
+    if optimizer_params.get("encoder_lr") and optimizer_params.get("decorder_lr"):
+        optimizer_params = get_optimizer_params(
+            model=model,
+            encoder_lr=optimizer_params["encoder_lr"],
+            decorder_lr=optimizer_params["decorder_lr"],
+        )
+    else:
+        model_parameters = model.parameters()
 
     match optimizer_type:
         case OptimizerType.SGD:
