@@ -43,6 +43,8 @@ class Config:
     cls_weight: float | None
     aux_params: dict[str, int | float] | None
 
+    max_grad_norm: float
+
     epochs: int
     patience: int
 

@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch import autocast
-from torch.cuda.amp import GradScaler
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
@@ -314,7 +314,7 @@ def scheduler_step(
 @dataclass(frozen=True)
 class AWPParams:
     adv_lr: float
-    adv_eps: float
+    adv_eps: int
     start_epoch: int
     adv_step: int
 
@@ -451,6 +451,8 @@ def train_one_epoch(
                     )
                     loss_cls = loss_cls1
                 else:
+                    cls_logits1 = torch.tensor(0.0)
+                    target_cls = torch.tensor(0.0)
                     loss_cls = torch.tensor(0.0)
 
                 loss = loss_mask + loss_cls
@@ -598,7 +600,7 @@ def valid_one_epoch(
                     loss_cls = criterion_cls(cls_logits, target_cls)
                     loss_cls = aux_params.cls_weight * loss_cls
                 else:
-                    loss_cls = 0
+                    loss_cls = torch.tensor(0.0)
 
                 loss = loss_mask + loss_cls
 
@@ -643,7 +645,6 @@ def valid_one_epoch(
             valid_losses.update(value=loss.item(), n=batch_size)
             valid_dices.update(value=valid_metrics["dice"], n=batch_size)
 
-            # TODO: どの指標を管理するか考える
             valid_log_assets = {
                 f"valid/{log_prefix}fold{fold}_loss": loss.item(),
                 f"valid/{log_prefix}fold{fold}_avg_dice": valid_dices.avg,

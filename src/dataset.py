@@ -122,7 +122,8 @@ class ContrailsDataset(Dataset):
             if self.transform_fn is not None:
                 augmented = self.transform_fn(image=raw_image, mask=raw_label)
                 image = augmented["image"]
-                label = augmented["mask"]
+                # label = augmented["mask"]
+                label = torch.tensor(raw_label).float()
             else:
                 image = torch.tensor(raw_image).float().permute(2, 0, 1)
                 label = torch.tensor(raw_label).float()

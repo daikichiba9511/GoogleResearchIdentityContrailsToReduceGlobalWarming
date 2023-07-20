@@ -99,7 +99,7 @@ def _test_get_optimizer() -> None:
 
     try:
         _ = get_optimizer(
-            optimizer_type="error",
+            optimizer_type="error",  # type: ignore
             optimizer_params={"lr": 0.01},
             model=nn.Linear(10, 10),
         )
