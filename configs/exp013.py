@@ -18,7 +18,6 @@ About
 
 - use {IMG_SIZE} x {IMG_SIZE} images
 
-- resume fine-tuning using positive sample only from exp009_1
 
 """
 
@@ -55,7 +54,7 @@ config = {
     "train_params": {},
     "patience": 12,
     "loss_type": "dice",
-    "loss_params": {"smooth": 1.0, "mode": "binary"},
+    "loss_params": {"smooth": 1e-6, "mode": "binary"},
     "cls_weight": 0.0,
     "aux_params": None,
     "optimizer_type": "adamw",

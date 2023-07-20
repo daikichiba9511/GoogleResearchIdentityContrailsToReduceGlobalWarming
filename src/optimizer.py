@@ -23,7 +23,7 @@ class OptimizerType(str, Enum):
 
 def get_optimizer_params(
     model: nn.Module, encoder_lr: float, decorder_lr: float
-) -> list[dict[str, torch.Tensor]]:
+) -> list[dict[str, object]]:
     params = model.named_parameters()
     encoder_params = list(
         map(lambda x: x[1], filter(lambda x: "encoder" in x[0], params))
@@ -58,10 +58,10 @@ def get_optimizer(
     """
     optimizer_type = OptimizerType(optimizer_type)
     if optimizer_params.get("encoder_lr") and optimizer_params.get("decorder_lr"):
-        optimizer_params = get_optimizer_params(
+        model_parameters = get_optimizer_params(
             model=model,
-            encoder_lr=optimizer_params["encoder_lr"],
-            decorder_lr=optimizer_params["decorder_lr"],
+            encoder_lr=optimizer_params.pop("encoder_lr"),
+            decorder_lr=optimizer_params.pop("decorder_lr"),
         )
     else:
         model_parameters = model.parameters()

@@ -251,7 +251,7 @@ def main(
                 aux_params=aux_params,
                 aug_params=aug_params,
                 schedule_per_step=schedule_per_step,
-                max_grad_norm=50,
+                max_grad_norm=1000.0,
             )
             valid_assets = valid_one_epoch(
                 fold=fold,

@@ -9,7 +9,7 @@ expname = __file__.split("/")[-1].split(".")[0]
 IMG_SIZE = 512
 
 DESC = f"""
-# exp013
+# exp013-1
 
 About
 -----
@@ -18,7 +18,7 @@ About
 
 - use {IMG_SIZE} x {IMG_SIZE} images
 
-- resume fine-tuning using positive sample only from exp009_1
+- resume training
 
 """
 
@@ -42,35 +42,38 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
-    "image_size": 512,
+    "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
     "train_batch_size": 16,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
-    "resume_training": False,
+    "resume_training": True,
     "resume_path": "./output/exp013/exp013-UNet-timm-resnest50d-fold{fold}.pth",
     "positive_only": True,
-    "epochs": 30,
+    "epochs": 20,
     "train_params": {},
     "patience": 12,
     "loss_type": "dice",
-    "loss_params": {"smooth": 1.0, "mode": "binary"},
+    "loss_params": {"smooth": 1e-6, "mode": "binary"},
     "cls_weight": 0.0,
     "aux_params": None,
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 2e-4,
+        "lr": 1e-5,
+        "encoder_lr": 1e-5,
+        "decorder_lr": 1e-4,
         "weight_decay": 0,
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
-        "warmup_ratio": 0.01,
+        "warmup_ratio": 0.05,
     },
     "train_aug_list": [
         # A.RandomResizedCrop(height=512, width=512, scale=(0.9, 1.0), p=1.0),
-        # A.CropNonEmptyMaskIfExists(height=512, width=512, p=1.0),
+        # A.CropNonEmptyMaskIfExists(height=IMG_SIZE, width=IMG_SIZE, p=1.0),
         A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
+        # A.RandomRotate90(p=0.5),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
@@ -88,7 +91,7 @@ config = {
         do_mixup=False,
         mixup_alpha=1.0,
         mixup_prob=0.5,
-        do_cutmix=False,
+        do_cutmix=True,
         cutmix_alpha=1.0,
         cutmix_prob=0.5,
         do_label_noise=False,

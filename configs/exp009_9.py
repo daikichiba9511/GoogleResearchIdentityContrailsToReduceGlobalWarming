@@ -6,8 +6,8 @@ from albumentations.pytorch import ToTensorV2
 root = "."
 expname = __file__.split("/")[-1].split(".")[0]
 
-IMG_SIZE = 256
-# IMG_SIZE = 512
+# IMG_SIZE = 256
+IMG_SIZE = 512
 # IMG_SIZE = 768
 # IMG_SIZE = 1024
 
@@ -47,11 +47,11 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 32,
+    "train_batch_size": 16,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
-    "resume_path": "./output/exp009_3/exp009_3-UNet-timm-resnest101e-fold0.pth",
+    "resume_path": "./output/exp009_9/exp009_9-UNet-timm-resnest101e-fold0.pth",
     "positive_only": False,
     "epochs": 50,
     "train_params": {},
@@ -65,7 +65,7 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 2e-4,
+        "lr": 5e-4,
         "weight_decay": 0.0,
     },
     # "scheduler_type": "cosineannealinglr",
