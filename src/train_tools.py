@@ -14,6 +14,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch import autocast
 from torch.cuda.amp import GradScaler
+from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -377,13 +378,15 @@ def train_one_epoch(
             start_epoch=awp_params.start_epoch,
             adv_step=awp_params.adv_step,
         )
+    else:
+        awp = None
 
     # used for freeze model
     is_frozen = False
 
     running_losses = AverageMeter(name="train_loss")
-    if aux_params is not None:
-        running_cls_accs = AverageMeter(name="train_cls_acc")
+    running_cls_accs = AverageMeter(name="train_cls_acc")
+
     with tqdm(
         enumerate(train_loader),
         total=len(train_loader),
@@ -422,9 +425,6 @@ def train_one_epoch(
             images = images.contiguous().to(device, non_blocking=True)
             target = target.contiguous().to(device, non_blocking=True)
 
-            if aux_params is not None:
-                target_cls = _make_cls_label(target)
-
             if (
                 not is_frozen
                 and freeze_params is not None
@@ -449,6 +449,7 @@ def train_one_epoch(
                     and criterion_cls is not None
                 ):
                     cls_logits1 = outputs["cls_logits"]
+                    target_cls = _make_cls_label(target)
                     loss_cls1 = aux_params.cls_weight * criterion_cls(
                         cls_logits1, target_cls
                     )
@@ -460,13 +461,19 @@ def train_one_epoch(
                 loss /= grad_accum_step_num
 
             running_losses.update(value=loss.item(), n=batch_size)
-            scaler.scale(loss).backward()
+            scaled_loss = scaler.scale(loss)
+            if isinstance(scaled_loss, torch.Tensor):
+                scaled_loss.backward()
 
-            if awp_params is not None and epoch >= awp_params.start_epoch:
+            if (
+                awp is not None
+                and awp_params is not None
+                and epoch >= awp_params.start_epoch
+            ):
                 awp.attack_backward(images, target, epoch)
 
             if (step + 1) % grad_accum_step_num == 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                clip_grad_norm_(model.parameters(), max_grad_norm)
 
                 scaler.step(optimizer)
                 scaler.update()
@@ -580,7 +587,8 @@ def valid_one_epoch(
             with torch.inference_mode():
                 with autocast(device_type=device.type, enabled=use_amp):
                     output = model(image)
-                logits = output["logits"]
+                # logits = output["logits"]
+                logits = output["preds"]
                 loss_mask = criterion(logits, target)
 
                 # cls: (N, 1)
@@ -592,7 +600,7 @@ def valid_one_epoch(
                     target_cls = _make_cls_label(target).to(device, non_blocking=True)
                     cls_logits = output["cls_logits"]
                     loss_cls = criterion_cls(cls_logits, target_cls)
-                    loss_cls = aux_params.weight_cls * loss_cls
+                    loss_cls = aux_params.cls_weight * loss_cls
                 else:
                     loss_cls = 0
 

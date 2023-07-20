@@ -127,7 +127,7 @@ class ContrailsDataset(Dataset):
                 image = torch.tensor(raw_image).float().permute(2, 0, 1)
                 label = torch.tensor(raw_label).float()
 
-            if self.image_size != 256 and self.resize_image is not None:
+            if self.image_size != 256:
                 label = TF.resize(
                     label.unsqueeze(0), size=[256, 256], antialias=True
                 ).squeeze(0)

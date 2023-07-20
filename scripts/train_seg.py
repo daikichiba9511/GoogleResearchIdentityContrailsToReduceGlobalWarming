@@ -11,6 +11,7 @@ import albumentations as A
 import pandas as pd
 import torch
 import typer
+from torch.cuda.amp.grad_scaler import GradScaler
 from torch.utils.data import DataLoader
 
 import wandb
@@ -222,7 +223,7 @@ def main(
         )
         loss = get_loss(loss_type=config.loss_type, loss_params=config.loss_params)
         cls_loss = torch.nn.BCEWithLogitsLoss()
-        scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
+        scaler = GradScaler(enabled=use_amp)
         earlystopping = EarlyStopping(
             patience=config.patience,
             save_dir=config.output_dir,

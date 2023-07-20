@@ -37,16 +37,17 @@ class ContrailsModel(nn.Module):
             logits = outputs
             cls_logits = None
 
-        if logits.shape[1] != 256:
-            logits = nn.functional.interpolate(
-                logits, size=(256, 256), mode="bilinear", align_corners=False
-            )
+        preds = nn.functional.interpolate(
+            logits, size=(256, 256), mode="bilinear", align_corners=False
+        )
+        preds = preds.squeeze(1)
         logits = logits.squeeze(1)
 
         # logist: (batch_size, height, width)
         outputs = {
             "logits": logits,
             "cls_logits": cls_logits,
+            "preds": preds,
         }
         return outputs
 

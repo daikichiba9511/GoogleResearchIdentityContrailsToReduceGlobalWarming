@@ -65,7 +65,7 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 5e-4,
+        "lr": 2e-4,
         "weight_decay": 0.0,
     },
     # "scheduler_type": "cosineannealinglr",
