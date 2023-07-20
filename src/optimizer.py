@@ -60,12 +60,12 @@ def get_optimizer(
         optim.Optimizer: Optimizer
     """
     optimizer_type = OptimizerType(optimizer_type)
-    if optimizer_params.get("encoder_lr") and optimizer_params.get("decorder_lr"):
+    if optimizer_params.get("encoder_lr") and optimizer_params.get("decoder_lr"):
         logger.info("Use different learning rates for encoder and decorder")
         model_parameters = get_optimizer_params(
             model=model,
             encoder_lr=optimizer_params.pop("encoder_lr"),
-            decorder_lr=optimizer_params.pop("decorder_lr"),
+            decorder_lr=optimizer_params.pop("decoder_lr"),
         )
     else:
         model_parameters = model.parameters()
