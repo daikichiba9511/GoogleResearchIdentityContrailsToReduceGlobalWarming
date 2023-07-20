@@ -1,10 +1,13 @@
 from enum import Enum
-from typing import Literal, TypeAlias
+from logging import getLogger
+from typing import Any, Literal, TypeAlias
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from typing_extensions import assert_never
+
+logger = getLogger(__name__)
 
 __all__ = [
     "OptimizerTypeStr",
@@ -40,7 +43,7 @@ def get_optimizer_params(
 
 def get_optimizer(
     optimizer_type: OptimizerTypeStr | OptimizerType,
-    optimizer_params: dict[str, int | float],
+    optimizer_params: dict[str, Any],
     model: nn.Module,
 ) -> optim.Optimizer:
     """Get optimizer
@@ -58,6 +61,7 @@ def get_optimizer(
     """
     optimizer_type = OptimizerType(optimizer_type)
     if optimizer_params.get("encoder_lr") and optimizer_params.get("decorder_lr"):
+        logger.info("Use different learning rates for encoder and decorder")
         model_parameters = get_optimizer_params(
             model=model,
             encoder_lr=optimizer_params.pop("encoder_lr"),

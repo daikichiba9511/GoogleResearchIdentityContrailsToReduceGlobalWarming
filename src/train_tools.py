@@ -436,11 +436,7 @@ def train_one_epoch(
 
             with autocast(device_type=device.type, enabled=use_amp):
                 outputs = model(images)
-                logits: torch.Tensor = outputs["logits"]
-                assert (
-                    logits.shape[1:] == target.shape[1:]
-                ), f"{logits.shape = }, {target.shape = }"
-                # assert target.shape[1:] == (256, 256), f"{target.shape = }"
+                logits: torch.Tensor = outputs["preds"]
                 loss_mask = criterion(logits, target)
 
                 if (
