@@ -436,7 +436,10 @@ def train_one_epoch(
 
             with autocast(device_type=device.type, enabled=use_amp):
                 outputs = model(images)
-                logits: torch.Tensor = outputs["preds"]
+                logits: torch.Tensor = outputs["logits"]
+                assert (
+                    logits.shape == target.shape
+                ), f"{logits.shape = }, {target.shape = }"
                 loss_mask = criterion(logits, target)
 
                 if (
@@ -587,6 +590,10 @@ def valid_one_epoch(
                     output = model(image)
                 # logits = output["logits"]
                 logits = output["preds"]
+                if target.shape[1:] == (256, 256):
+                    target = F.interpolate(
+                        target.unsqueeze(1).float(), size=256, mode="bilinear"
+                    ).squeeze(1)
                 loss_mask = criterion(logits, target)
 
                 # cls: (N, 1)

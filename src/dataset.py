@@ -122,16 +122,16 @@ class ContrailsDataset(Dataset):
             if self.transform_fn is not None:
                 augmented = self.transform_fn(image=raw_image, mask=raw_label)
                 image = augmented["image"]
-                # label = augmented["mask"]
-                label = torch.tensor(raw_label).float()
+                label = augmented["mask"]
+                # label = torch.tensor(raw_label).float()
             else:
                 image = torch.tensor(raw_image).float().permute(2, 0, 1)
                 label = torch.tensor(raw_label).float()
 
-            if self.image_size != 256:
-                label = TF.resize(
-                    label.unsqueeze(0), size=[256, 256], antialias=True
-                ).squeeze(0)
+            # if self.image_size != 256:
+            #     label = TF.resize(
+            #         label.unsqueeze(0), size=[256, 256], antialias=True
+            #     ).squeeze(0)
 
             return image, label
 

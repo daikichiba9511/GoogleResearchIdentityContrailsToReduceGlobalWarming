@@ -88,7 +88,9 @@ class GeM(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.gem(x, p=self.p, eps=self.eps)
 
-    def gem(self, x: torch.Tensor, p: int = 3, eps: float = 1e-6) -> torch.Tensor:
+    def gem(
+        self, x: torch.Tensor, p: int | nn.Parameter = 3, eps: float = 1e-6
+    ) -> torch.Tensor:
         return F.avg_pool2d(x.clamp(min=eps).pow(p), (x.size(-2), x.size(-1))).pow(
             1.0 / p
         )
