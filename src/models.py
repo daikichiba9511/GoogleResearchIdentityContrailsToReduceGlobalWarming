@@ -223,16 +223,16 @@ class UNETR_Segformer(nn.Module):
             image: (batch, c, depth, h, w)
         """
         output = self.encoder(image)
-        output = self.dropout(output)
-        print(output.shape)
-        # (b, num_channels, img_size, img_size)
-        output = self.encoder_2d(output).logits
+        output = self.dropout(output)  # (b, num_channels, img_size, img_size)
+        output = self.encoder_2d(output).logits  # type: ignore
         output = self.upscaler1(output)
         output = self.upscaler2(output)
 
         preds = F.interpolate(
             output, size=(256, 256), mode="bilinear", align_corners=False
-        )
+        ).squeeze(1)
+        output = output.squeeze(1)
+
         outputs = {
             "logits": output,
             "preds": preds,
