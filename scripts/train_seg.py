@@ -97,8 +97,8 @@ def get_loaders(
         valid_df = valid_df.sample(n=100, random_state=0)
         num_workers = 1
 
-    train_aug = A.Compose(config.train_aug_list)
-    valid_aug = A.Compose(config.valid_aug_list)
+    train_aug = A.Compose(config.train_aug_list)  # type: ignore
+    valid_aug = A.Compose(config.valid_aug_list)  # type: ignore
 
     train_dataset = ContrailsDataset(
         df=train_df, image_size=config.image_size, train=True, transform_fn=train_aug
@@ -287,9 +287,7 @@ def main(
         save_path = (
             f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
         )
-        earlystopping.save_checkpoint(
-            float("inf"), model, config.output_dir / save_path
-        )
+        earlystopping.save_checkpoint(float("inf"), model, config.output_dir / save_path)
         logger.info(f"## Fold: {fold} End ##")
 
         if run is not None:

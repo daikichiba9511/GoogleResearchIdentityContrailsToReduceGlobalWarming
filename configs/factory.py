@@ -3,7 +3,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from logging import getLogger
 from pathlib import Path
-from typing import TypeVar
+from typing import TypedDict, TypeVar
 
 from src.losses import LossType, LossTypeStr
 from src.optimizer import OptimizerType, OptimizerTypeStr
@@ -12,6 +12,19 @@ from src.scheduler import SchedulerType, SchedulerTypeStr
 logger = getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class AugParamsDict(TypedDict):
+    do_mixup: bool
+    mixup_alpha: float
+    mixup_prob: float
+
+    do_cutmix: bool
+    cutmix_alpha: float
+    cutmix_prob: float
+
+    do_label_noise: bool
+    label_noise_prob: float
 
 
 @dataclass
@@ -64,7 +77,7 @@ class Config:
     train_aug_list: list[Callable]
     valid_aug_list: list[Callable]
     test_aug_list: list[Callable]
-    aug_params: dict[str, float | bool]
+    aug_params: AugParamsDict
 
     # -- Inference
     test_batch_size: int

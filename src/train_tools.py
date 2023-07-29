@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch import autocast
+from torch.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_
 from torch.utils.data import DataLoader
@@ -112,7 +112,13 @@ class AWP:
                 adv_loss = adv_loss.mean()
 
             if self.scaler is not None:
-                self.scaler.scale(adv_loss).backward()
+                scaled_loss = self.scaler.scale(adv_loss)
+                if isinstance(scaled_loss, torch.Tensor):
+                    scaled_loss.backward()
+                else:
+                    raise TypeError(
+                        f"Expected torch.Tensor, but got {type(scaled_loss)}"
+                    )
             else:
                 adv_loss.backward()
 
@@ -123,11 +129,7 @@ class AWP:
     def _attack_step(self) -> None:
         e = 1e-6
         for name, param in self.model.named_parameters():
-            if (
-                param.requires_grad
-                and param.grad is not None
-                and self.adv_param in name
-            ):
+            if param.requires_grad and param.grad is not None and self.adv_param in name:
                 norm1 = torch.norm(param.grad)
                 norm2 = torch.norm(param.data.detach())
                 if norm1 != 0 and not torch.isnan(norm1):
@@ -141,11 +143,7 @@ class AWP:
 
     def _save(self) -> None:
         for name, param in self.model.named_parameters():
-            if (
-                param.requires_grad
-                and param.grad is not None
-                and self.adv_param in name
-            ):
+            if param.requires_grad and param.grad is not None and self.adv_param in name:
                 if name not in self.backup:
                     self.backup[name] = param.data.clone()
                     grad_eps = self.adv_eps * param.abs().detach()
@@ -220,9 +218,7 @@ class EarlyStopping:
     def __call__(self, score: float, model: nn.Module, save_path: Path | str) -> None:
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(
-                score, model=model, save_path=self.save_dir / save_path
-            )
+            self.save_checkpoint(score, model=model, save_path=self.save_dir / save_path)
 
         is_min_update = (
             self.direction == "maximize" and score < self.best_score + self.delta
@@ -247,9 +243,7 @@ class EarlyStopping:
                 f"Detected update Score: best score {self.best_score} --> {score}"
             )
             self.best_score = score
-            self.save_checkpoint(
-                score, model=model, save_path=self.save_dir / save_path
-            )
+            self.save_checkpoint(score, model=model, save_path=self.save_dir / save_path)
             self.counter = 0
 
     def save_checkpoint(self, score: float, model: nn.Module, save_path: Path) -> None:
@@ -270,7 +264,7 @@ def seed_everything(seed: int = 42) -> None:
     torch.cuda.manual_seed(seed)
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    torch.autograd.set_detect_anomaly(False)
+    torch.autograd.anomaly_mode.set_detect_anomaly(False)
 
 
 def _make_cls_label(mask: torch.Tensor) -> torch.Tensor:
@@ -300,7 +294,7 @@ def _freeze_model(model: nn.Module, freeze_keys: Iterable[str] = ["encoder"]) ->
 
 
 def scheduler_step(
-    scheduler: optim.lr_scheduler.LRScheduler, loss: float, epoch: int = None
+    scheduler: optim.lr_scheduler.LRScheduler, loss: float, epoch: int | None = None
 ) -> None:
     if loss in [float("inf"), float("-inf"), None, torch.nan]:
         return
@@ -589,11 +583,14 @@ def valid_one_epoch(
                 with autocast(device_type=device.type, enabled=use_amp):
                     output = model(image)
                 # logits = output["logits"]
-                logits = output["preds"]
-                if target.shape[1:] == (256, 256):
+                logits: torch.Tensor = output["preds"]
+                if target.shape[1:] != (256, 256):
                     target = F.interpolate(
                         target.unsqueeze(1).float(), size=256, mode="bilinear"
                     ).squeeze(1)
+                assert (
+                    logits.shape == target.shape
+                ), f"{logits.shape = }, {target.shape = }"
                 loss_mask = criterion(logits, target)
 
                 # cls: (N, 1)
@@ -608,6 +605,8 @@ def valid_one_epoch(
                     loss_cls = aux_params.cls_weight * loss_cls
                 else:
                     loss_cls = torch.tensor(0.0)
+                    cls_logits = torch.tensor(0.0)
+                    target_cls = torch.tensor(0.0)
 
                 loss = loss_mask + loss_cls
 
@@ -634,7 +633,8 @@ def valid_one_epoch(
 
             valid_metrics = metrics_fn(target=target, preds=y_preds)
 
-            if debug:
+            # if debug:
+            if False:
                 # from IPython import embed
                 from pdb import set_trace
 

@@ -187,8 +187,73 @@ class ContrailsModelV2(nn.Module):
         return y
 
 
+from monai.networks.nets import UNETR
+from transformers import SegformerForSemanticSegmentation
+
+
+class UNETR_Segformer(nn.Module):
+    def __init__(self, img_size: int, dropout: float = 0.2):
+        super().__init__()
+        self.dropout = nn.Dropout2d(dropout)
+        # img_size: (depth, height, width)
+        self.encoder = UNETR(
+            in_channels=3,
+            out_channels=32,
+            # img_size=(16, img_size[0], img_size[1]),
+            img_size=img_size,
+            spatial_dims=2,  # H, W
+            conv_block=True,
+        )
+        self.encoder_2d = SegformerForSemanticSegmentation.from_pretrained(
+            "nvidia/mit-b5",
+            num_labels=1,
+            ignore_mismatched_sizes=True,
+            num_channels=32,
+        )
+        self.upscaler1 = nn.ConvTranspose2d(
+            1, 1, kernel_size=(4, 4), stride=2, padding=1
+        )
+        self.upscaler2 = nn.ConvTranspose2d(
+            1, 1, kernel_size=(4, 4), stride=2, padding=1
+        )
+
+    def forward(self, image: torch.Tensor) -> dict[str, torch.Tensor]:
+        """
+        Args:
+            image: (batch, c, depth, h, w)
+        """
+        output = self.encoder(image)
+        output = self.dropout(output)
+        print(output.shape)
+        # (b, num_channels, img_size, img_size)
+        output = self.encoder_2d(output).logits
+        output = self.upscaler1(output)
+        output = self.upscaler2(output)
+
+        preds = F.interpolate(
+            output, size=(256, 256), mode="bilinear", align_corners=False
+        )
+        outputs = {
+            "logits": output,
+            "preds": preds,
+        }
+        return outputs
+
+
 if __name__ == "__main__":
     model = ContrailsModelV2()
     im = torch.randn(2, 3 * 8, 256, 256)
     out = model(im)
     print(out.shape)
+
+    model = UNETR_Segformer(img_size=256)
+    im = torch.randn(2, 3, 256, 256)
+    out = model(im)
+    print(out["logits"].shape)
+    print(out["preds"].shape)
+
+    model = UNETR_Segformer(img_size=512).cuda()
+    im = torch.randn(4, 3, 512, 512).cuda()
+    out = model(im)
+    print(out["logits"].shape)
+    print(out["preds"].shape)

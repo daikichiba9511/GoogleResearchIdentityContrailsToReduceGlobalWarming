@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from functools import lru_cache
 from pathlib import Path
 from typing import Sequence
 
@@ -41,6 +42,16 @@ def get_false_color(record_data: dict[str, np.ndarray]) -> np.ndarray:
     false_color: np.ndarray = np.clip(np.stack([r, g, b], axis=2), 0, 1)
     # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
     return false_color
+
+
+@lru_cache(maxsize=128)
+def _load_image(path: str) -> tuple[np.ndarray, np.ndarray]:
+    contrails_image = np.load(str(path))
+    raw_image = contrails_image[..., :-1]
+    raw_label = contrails_image[..., -1]
+    raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+    raw_label = np.reshape(raw_label, (256, 256)).astype(np.float32)
+    return raw_image, raw_label
 
 
 class ContrailsDataset(Dataset):
@@ -111,13 +122,14 @@ class ContrailsDataset(Dataset):
             contrails_image_path = row["path"]
             # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
             # n_times_before = 4, n_times_after = 3
-            contrails_image = np.load(str(contrails_image_path))
+            # contrails_image = np.load(str(contrails_image_path))
             # contrails_image = self.load_img(str(contrails_image_path))
-            raw_image = contrails_image[..., :-1]
-            raw_label = contrails_image[..., -1]
+            # raw_image = contrails_image[..., :-1]
+            # raw_label = contrails_image[..., -1]
 
-            raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
-            raw_label = np.reshape(raw_label, (256, 256)).astype(np.float32)
+            # raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+            # raw_label = np.reshape(raw_label, (256, 256)).astype(np.float32)
+            raw_image, raw_label = _load_image(contrails_image_path)
 
             if self.transform_fn is not None:
                 augmented = self.transform_fn(image=raw_image, mask=raw_label)

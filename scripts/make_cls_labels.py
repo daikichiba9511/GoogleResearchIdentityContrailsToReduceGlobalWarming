@@ -7,6 +7,8 @@ from tqdm.auto import tqdm
 
 from src.train_tools import _make_cls_label, seed_everything
 
+seed_everything(42)
+
 data_root = Path("./input/contrails-images-ash-color")
 df = pd.read_csv(data_root / "df.csv")
 
