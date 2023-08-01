@@ -65,6 +65,9 @@ class Config:
     resume_path: str
     positive_only: bool
 
+    with_pseudo_label: bool
+    pseudo_label_dir: Path
+
     loss_type: LossType | LossTypeStr
     loss_params: dict[str, int | float]
 

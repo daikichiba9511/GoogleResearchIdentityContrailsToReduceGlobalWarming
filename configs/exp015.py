@@ -48,6 +48,8 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
+    "with_pseudo_label": False,
+    "pseudo_label_dir": Path("None"),
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
@@ -126,5 +128,5 @@ if __name__ == "__main__":
 
     pprint.pprint(config)
     print("## init config ##")
-    config_ver = "exp002"
+    config_ver = "exp015"
     pprint.pprint(init_config(Config, f"configs.{config_ver}"))

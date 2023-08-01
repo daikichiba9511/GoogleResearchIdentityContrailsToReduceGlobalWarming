@@ -12,14 +12,15 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp018
+# exp021
 
-copy from exp015
+copy from exp018
 
 ## Purpose
 
-- encoder:
+- encoder: mit_b5
 - img_size={IMG_SIZE}
+- with_pseudo_label
 
 """
 
@@ -50,8 +51,8 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
-    "with_pseudo_label": False,
-    "pseudo_label_dir": Path("None"),
+    "with_pseudo_label": True,
+    "pseudo_label_dir": Path(f"{root}/input/imgs_with_pseudo_labels_20230730185409"),
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training

@@ -1,6 +1,8 @@
+from datetime import datetime, timedelta
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
-from typing import Final
+from typing import Final, Sequence
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -26,26 +28,32 @@ def get_stream_logger(level: int = INFO, format: str = DEFAULT_FORMAT) -> Logger
 
 def add_file_handler(
     logger: Logger, filename: str, level: int = INFO, format: str = DEFAULT_FORMAT
-) -> Logger:
+) -> None:
     handler = FileHandler(filename=filename)
     handler.setLevel(level)
     handler.setFormatter(Formatter(format))
     logger.addHandler(handler)
 
 
-def list_to_string(x: list[object]) -> str:
+def get_called_time() -> str:
+    """Get current time in JST (Japan Standard Time = UTC+9)"""
+    now = datetime.utcnow() + timedelta(hours=9)
+    return now.strftime("%Y%m%d%H%M%S")
+
+
+def list_to_string(x: list[int]) -> str:
     if x:
         return str(x).replace("[", "").replace("]", "").replace(",", "")
     return "-"
 
 
-def rle_encode(preds, fg_val: int = 1) -> str:
+def rle_encode(preds: np.ndarray, fg_val: int = 1) -> str:
     """
     Args:
         preds (np.ndarray): Predictions of shape (H, W), 1 - mask, 0 - background
     """
     dots = np.where(preds.T.flatten() == fg_val)[0]
-    run_lengths = []
+    run_lengths: list[int] = []
     prev = -2
     for b in dots:
         if b > prev + 1:
@@ -97,6 +105,9 @@ def plot_preds_with_label_on_image(
     figsize: tuple[int, int] = (10, 10),
 ) -> tuple:
     fig, ax = plt.subplots(1, 1, figsize=figsize)
+    if not isinstance(ax, plt.Axes):
+        raise ValueError("image must be plt.Axes")
+
     color_label = np.zeros((*label.shape, 3))
     color_label[label == 1] = (0, 1, 0)
 
@@ -104,7 +115,18 @@ def plot_preds_with_label_on_image(
     color_pred[pred > 0.5] = (1, 0, 0)
 
     ax.imshow(image)
-    ax.imshow(color_pred, alpha=0.5)
-    ax.imshow(color_label, alpha=0.5)
+    ax.imshow(color_pred, alpha=0.5, label="pred")
+    ax.imshow(color_label, alpha=0.5, label="label")
 
     return fig, ax
+
+
+def filter_tiny_objects(image: np.ndarray, thr: int) -> np.ndarray:
+    _image = image.copy()
+    # _image = image
+
+    num_labels, labels = cv2.connectedComponents(_image.astype(np.uint8))
+    for label in range(1, num_labels):
+        if np.sum(labels == label) < thr:
+            _image[labels == label] = 0
+    return _image

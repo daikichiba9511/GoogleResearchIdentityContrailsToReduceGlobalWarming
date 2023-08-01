@@ -12,14 +12,18 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp018
+# exp019
 
-copy from exp015
+copy from exp018
 
 ## Purpose
 
-- encoder:
+- try to use UNETR_Segformer
 - img_size={IMG_SIZE}
+
+## References
+
+[1] https://www.kaggle.com/competitions/vesuvius-challenge-ink-detection/discussion/417496
 
 """
 
@@ -28,17 +32,18 @@ config = {
     "description": DESC,
     "seed": 42,
     # -- Model
-    "arch": "UNet",
+    "arch": "UNETR_Segformer",
     # ref: https://smp.readthedocs.io/en/latest/encoders.html
     # "encoder_name": "timm-resnest26d",  # 16M
     # "encoder_name": "timm-resnest50d",  # 25M
     # "encoder_name": "timm-resnest101e",  # 46M
     # "encoder_name": "timm-resnest200e",  # 86M
     # "encoder_name": "timm-efficientnet-b8",
-    "encoder_name": "mit_b5",
+    # "encoder_name": "mit_b5",
+    "encoder_name": "vit_mitb5",
     "encoder_weight": "imagenet",
     # "encoder_weight": "advprop",
-    "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
+    "checkpoints": ["./output/exp019/exp019-UNETR_Segformer-vit_mitb5-fold0.pth"],
     # -- Data
     "data_root_path": Path(
         # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
@@ -50,13 +55,11 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
-    "with_pseudo_label": False,
-    "pseudo_label_dir": Path("None"),
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 8,
-    "valid_batch_size": 32,
+    "train_batch_size": 4,
+    "valid_batch_size": 8,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
     "resume_path": "",
@@ -74,7 +77,9 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 2e-4,
+        # "lr": 3e-4, ## -> nan
+        # "lr": 2e-4,  # -> nan
+        "lr": 1e-4,
         "weight_decay": 0.0,
     },
     # "scheduler_type": "cosineannealinglr",
@@ -118,7 +123,7 @@ config = {
         label_noise_prob=0.5,
     ),
     # -- Inference
-    "test_batch_size": 32,
+    "test_batch_size": 8,
     "threshold": 0.5,
 }
 

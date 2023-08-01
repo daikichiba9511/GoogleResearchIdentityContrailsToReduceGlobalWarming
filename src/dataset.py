@@ -10,6 +10,7 @@ import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as TF
 from torch.utils.data import Dataset
+from tqdm.auto import tqdm
 
 
 def read_record(
@@ -74,13 +75,15 @@ class ContrailsDataset(Dataset):
 
     def __init__(
         self,
-        df: pd.DataFrame,
+        image_paths: Sequence[Path],
         image_size: int = 224,
         train: bool = True,
         normalize_fn: Callable | None = None,
         transform_fn: Callable | None = None,
+        image_ids: Sequence[str] | None = None,
     ) -> None:
-        self.df = df
+        self.image_paths = image_paths
+        self.image_ids = image_ids
         self.image_size = image_size
         self.is_train = train
 
@@ -117,9 +120,8 @@ class ContrailsDataset(Dataset):
         return np.ndarray(shape=shape, dtype=desc, buffer=file.read(datasize))
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
-        row = self.df.iloc[index]
         if self.is_train:
-            contrails_image_path = row["path"]
+            contrails_image_path = self.image_paths[index]
             # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
             # n_times_before = 4, n_times_after = 3
             # contrails_image = np.load(str(contrails_image_path))
@@ -148,7 +150,7 @@ class ContrailsDataset(Dataset):
             return image, label
 
         else:
-            contrails_image_path = row["path"]
+            contrails_image_path = self.image_paths[index]
             record_data = read_record(contrails_image_path)
             n_times_before = 4
             false_color_img = get_false_color(record_data)
@@ -161,13 +163,15 @@ class ContrailsDataset(Dataset):
             else:
                 image = torch.tensor(raw_image).float().permute(2, 0, 1)
 
-            image_id = self.df.iloc[index]["record_id"]
-            image_id = torch.tensor(int(image_id))
+            if self.image_ids is None:
+                raise ValueError("image_ids must be set when is_train=False")
 
+            image_id = self.image_ids[index]
+            image_id = torch.tensor(int(image_id))
             return image, image_id
 
     def __len__(self) -> int:
-        return len(self.df)
+        return len(self.image_paths)
 
 
 class ClsDataset(Dataset):
@@ -210,37 +214,51 @@ class ClsDataset(Dataset):
 
 class SegDataset(Dataset):
     def __init__(
-        self, img_dirs: Sequence[Path], transform_fn: Callable | None = None
+        self,
+        img_dirs: Sequence[Path],
+        transform_fn: Callable | None = None,
+        skip_image_ids: Sequence[str] | None = None,
     ) -> None:
         self.img_dirs = img_dirs
         self.transform_fn = transform_fn
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, list[str]]:
-        img_dir = self.img_dirs[index]
-        record_data = read_record(img_dir)
-        # shape: (256, 256, 3, T), T = n_times_before + n_times_after + 1 = 8
-        false_color = get_false_color(record_data)
         n_times_before = 4
 
         imgs, img_ids = [], []
-        for i in range(8):
-            if i == n_times_before:
-                continue
-            raw_image = false_color[..., i]
-            raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+        for img_dir in tqdm(
+            self.img_dirs,
+            desc="Loading data...",
+            total=len(self.img_dirs),
+            dynamic_ncols=True,
+        ):
+            record_data = read_record(img_dir)
+            # shape: (256, 256, 3, T), T = n_times_before + n_times_after + 1 = 8
+            false_color = get_false_color(record_data)
+            for i in range(8):
+                if i == n_times_before:
+                    continue
+                raw_image = false_color[..., i]
+                raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
 
-            if self.transform_fn is not None:
-                augmented = self.transform_fn(image=raw_image)
-                image = augmented["image"]
-            else:
-                image = torch.tensor(raw_image).float().permute(2, 0, 1)
+                image_id = str(img_dir.stem) + "_" + str(i)
+                if skip_image_ids is not None and image_id in skip_image_ids:
+                    continue
 
-            image_id = str(img_dir.stem) + "_" + str(i)
+                img_ids.append(image_id)
+                imgs.append(raw_image)
+        self.imgs = imgs
+        self.img_ids = img_ids
 
-            img_ids.append(image_id)
-            imgs.append(image)
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, list[str]]:
+        img = self.imgs[index]
+        img_id = self.img_ids[index]
 
-        return torch.stack(imgs), img_ids
+        if self.transform_fn is not None:
+            augmented: dict[str, torch.Tensor] = self.transform_fn(image=img)
+            image: torch.Tensor = augmented["image"]
+        else:
+            image = torch.tensor(img).float().permute(2, 0, 1)
+        return image, img_id
 
     def __len__(self) -> int:
         return len(self.img_dirs)

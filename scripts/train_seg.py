@@ -4,7 +4,6 @@ import multiprocessing as mp
 import os
 import pprint
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 import albumentations as A
@@ -19,7 +18,7 @@ from configs.factory import Config, init_config
 from src.dataset import ContrailsDataset
 from src.losses import get_loss
 from src.metrics import calc_metrics
-from src.models import ContrailsModel
+from src.models import ContrailsModel, UNETR_Segformer
 from src.optimizer import get_optimizer
 from src.scheduler import SchedulerType, get_scheduler
 from src.train_tools import (
@@ -31,11 +30,11 @@ from src.train_tools import (
     train_one_epoch,
     valid_one_epoch,
 )
-from src.utils import add_file_handler, get_stream_logger
+from src.utils import add_file_handler, get_called_time, get_stream_logger
 
 logger = get_stream_logger(20)
 
-TODAY = datetime.today().strftime("%Y%m%d")
+TODAY = get_called_time()
 
 
 def make_df(data_root_path: Path, image_root_path: Path, phase: str) -> pd.DataFrame:
@@ -48,10 +47,7 @@ def make_df(data_root_path: Path, image_root_path: Path, phase: str) -> pd.DataF
                 {"record_id": record_id, "path": image_file_path, "label": label}
             )
     df = pd.DataFrame(paths)
-    # print(df)
-    # print(df.iloc[0])
-    # print(df.iloc[0]["record_id"])
-    # print(df.iloc[0]["path"])
+    logger.info(f"\n{df.head(10)}")
     return df
 
 
@@ -66,9 +62,10 @@ def get_dfs(config: Config, fold: int) -> tuple[pd.DataFrame, pd.DataFrame]:
 
     # df.csv is made by scripts/make_fold.py
     df = pd.read_csv(config.data_root_path / "df.csv")
-    print(df)
+    logger.info(f"\n{df}")
     train_df = df[df["fold"] != fold].reset_index(drop=True)
     valid_df = df[df["fold"] == fold].reset_index(drop=True)
+    logger.info(f"{len(train_df) = }, {len(valid_df) =}")
     return train_df, valid_df
 
 
@@ -91,20 +88,35 @@ def get_loaders(
     else:
         train_df, valid_df = get_dfs(config, fold=fold)
 
+    train_image_paths = train_df["path"].to_numpy().tolist()
+    valid_image_paths = valid_df["path"].to_numpy().tolist()
+
+    if config.with_pseudo_label:
+        paths = list(Path(config.pseudo_label_dir).glob("*"))
+        logger.info(f"Use pseudo labeled data {len(paths) = }")
+        train_image_paths += paths
+
     num_workers = mp.cpu_count()
     if debug:
-        train_df = train_df.sample(n=100, random_state=0)
-        valid_df = valid_df.sample(n=100, random_state=0)
+        train_image_paths = train_image_paths[:100]
+        valid_image_paths = valid_image_paths[:100]
         num_workers = 1
+
+    logger.info(f"{len(train_image_paths) = }, {len(valid_image_paths) = }")
 
     train_aug = A.Compose(config.train_aug_list)  # type: ignore
     valid_aug = A.Compose(config.valid_aug_list)  # type: ignore
-
     train_dataset = ContrailsDataset(
-        df=train_df, image_size=config.image_size, train=True, transform_fn=train_aug
+        image_paths=train_image_paths,
+        image_size=config.image_size,
+        train=True,
+        transform_fn=train_aug,
     )
     valid_dataset = ContrailsDataset(
-        df=valid_df, image_size=config.image_size, train=True, transform_fn=valid_aug
+        image_paths=valid_image_paths,
+        image_size=config.image_size,
+        train=True,
+        transform_fn=valid_aug,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -176,12 +188,17 @@ def main(
             fold=fold,
             positive_only=config.positive_only,
         )
-        model = ContrailsModel(
-            encoder_name=config.encoder_name,
-            encoder_weight=config.encoder_weight,
-            aux_params=config.aux_params,
-            arch=config.arch,
-        )
+        logger.info(f"{config.arch =}")
+        model: UNETR_Segformer | ContrailsModel
+        if config.arch == "UNETR_Segformer":
+            model = UNETR_Segformer(img_size=config.image_size)
+        else:
+            model = ContrailsModel(
+                encoder_name=config.encoder_name,
+                encoder_weight=config.encoder_weight,
+                aux_params=config.aux_params,
+                arch=config.arch,
+            )
         model = model.to(device=device)
         if config.resume_training:
             resume_path = config.resume_path.format(fold=fold)

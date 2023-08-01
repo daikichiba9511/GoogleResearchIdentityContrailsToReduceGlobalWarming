@@ -4,11 +4,11 @@ import torch
 __all__ = ["dice", "calc_metrics"]
 
 
-def dice(pred: np.ndarray, mask: np.ndarray) -> float:
+def dice(pred: np.ndarray, mask: np.ndarray, eps: float = 1e-7) -> float:
     intersection = (pred * mask).sum()
     pred_sum = pred.sum()
     mask_sum = mask.sum()
-    dice = (2.0 * intersection) / (pred_sum + mask_sum)
+    dice = (2.0 * intersection) / (pred_sum + mask_sum + eps)
     dice = np.mean(dice)
     return dice.item()
 

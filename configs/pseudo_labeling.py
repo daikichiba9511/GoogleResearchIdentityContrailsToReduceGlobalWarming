@@ -12,14 +12,11 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp018
-
-copy from exp015
+copy from exp018
 
 ## Purpose
 
-- encoder:
-- img_size={IMG_SIZE}
+- pseudo labeling with exp015 and exp018
 
 """
 
@@ -41,8 +38,8 @@ config = {
     "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
-        # f"{root}/input/google-research-identify-contrails-reduce-global-warming"
-        f"{root}/input/contrails-images-ash-color"
+        f"{root}/input/google-research-identify-contrails-reduce-global-warming"
+        # f"{root}/input/contrails-images-ash-color"
     ),
     "train_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/train.csv"
@@ -50,8 +47,6 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
-    "with_pseudo_label": False,
-    "pseudo_label_dir": Path("None"),
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
@@ -118,7 +113,7 @@ config = {
         label_noise_prob=0.5,
     ),
     # -- Inference
-    "test_batch_size": 32,
+    "test_batch_size": 4,
     "threshold": 0.5,
 }
 

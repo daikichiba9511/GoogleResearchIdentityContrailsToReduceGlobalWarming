@@ -12,14 +12,14 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp018
+# exp020
 
 copy from exp015
 
 ## Purpose
 
-- encoder:
-- img_size={IMG_SIZE}
+- make sure that cutmix works for bigger models with img_size={IMG_SIZE}
+- use psuedo labeled data
 
 """
 
@@ -34,10 +34,9 @@ config = {
     # "encoder_name": "timm-resnest50d",  # 25M
     # "encoder_name": "timm-resnest101e",  # 46M
     # "encoder_name": "timm-resnest200e",  # 86M
-    # "encoder_name": "timm-efficientnet-b8",
-    "encoder_name": "mit_b5",
-    "encoder_weight": "imagenet",
-    # "encoder_weight": "advprop",
+    "encoder_name": "timm-efficientnet-b8",
+    # "encoder_weight": "imagenet",
+    "encoder_weight": "advprop",
     "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
@@ -50,8 +49,9 @@ config = {
     "valid_csv_path": Path(
         f"{root}/input/google-research-identify-contrails-reduce-global-warming/valid.csv"
     ),
-    "with_pseudo_label": False,
-    "pseudo_label_dir": Path("None"),
+    "with_pseudo_label": True,
+    # "pseudo_label_dir": Path(f"{root}/input/imgs_with_pseudo_labels_20230730185409"),
+    "pseudo_label_dir": Path(f"{root}/input/imgs_with_pseudo_labels_20230801104006"),
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training

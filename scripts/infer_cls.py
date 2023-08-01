@@ -17,9 +17,11 @@ from tqdm.auto import tqdm
 from configs.factory import Config, init_config
 from src.dataset import ClsDataset
 from src.models import ContrailsModel
-from src.utils import add_file_handler, get_stream_logger
+from src.utils import add_file_handler, get_called_time, get_stream_logger
 
 logger = get_stream_logger(20)
+
+EXECUTE_TIME = get_called_time()
 
 
 def get_loader(
@@ -127,7 +129,10 @@ def main(config_ver: str, debug: bool = False) -> None:
 
     pred_df = pd.DataFrame(preds)
     print(pred_df)
-    pred_df.to_csv(config.output_dir / f"cls_infer_{execute_id}.csv", index=False)
+    pred_df.to_csv(
+        config.output_dir.parent / f"cls_infer_{config_ver}_{execute_id}.csv",
+        index=False,
+    )
 
 
 if __name__ == "__main__":

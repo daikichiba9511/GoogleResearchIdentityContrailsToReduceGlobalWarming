@@ -46,8 +46,13 @@ def get_loader(
 
     cls_df = pd.read_csv("./output/exp012/cls_infer_3d97fd13.csv")
     total_num = cls_df.shape[0]
-    cls_df = cls_df[cls_df["pred"] < 0.9]
-    skip_img_ids = cls_df["img_ids"].to_numpy()
+    # NOTE: しきい値以下のものを除外する
+    # v1は0.9で簡単目のサンプル以外を除外した
+    # データを増やして再学習したのでもう少しむずかし目の？サンプルにラベル付けする(thr=0.6)
+    cls_df = cls_df[cls_df["pred"] < 0.6]
+    skip_img_ids = cls_df["img_ids"].to_numpy().tolist()
+
+    logger.info(f"{skip_img_ids[:10]}")
     logger.info(f"the number of skip images: {len(skip_img_ids)} / {total_num}")
 
     # for i in range(5, 10):
@@ -64,6 +69,8 @@ def get_loader(
         img_dirs=img_dirs, transform_fn=test_aug, skip_image_ids=skip_img_ids
     )
 
+    logger.info(f"the number of dataset: {len(seg_dataset)}")
+
     seg_dataloader = DataLoader(
         seg_dataset,
         batch_size=batch_size,
@@ -76,7 +83,9 @@ def get_loader(
 
 
 class EnsembleModel:
-    def __init__(self, models: Sequence[torch.nn.Module], on_cuda: bool = False) -> None:
+    def __init__(
+        self, models: Sequence[torch.nn.Module], on_cuda: bool = False
+    ) -> None:
         self.models = models
         if on_cuda:
             self.models = [model.cuda() for model in self.models]
@@ -94,27 +103,27 @@ class EnsembleModel:
 
 def build_model(on_cuda: bool = False) -> EnsembleModel:
     # -- exp015: efficientnet-b8, img_size512
-    config = init_config(Config, "configs.exp015")
+    config = init_config(Config, "configs.exp020")
     contrail_effb8 = ContrailsModel(
         encoder_name=config.encoder_name,
         encoder_weight=None,
         arch=config.arch,
         aux_params=config.aux_params,
     )
-    ckpt = Path("./output/exp015/exp015-UNet-timm-efficientnet-b8-fold0.pth")
+    ckpt = Path("./output/exp020/exp020-UNet-timm-efficientnet-b8-fold0.pth")
     logger.info(f"load checkpoint: {ckpt}")
     contrail_effb8.load_state_dict(torch.load(ckpt))
     contrail_effb8.eval()
 
     # -- exp018: mit_b5, img_size512
-    config = init_config(Config, "configs.exp018")
+    config = init_config(Config, "configs.exp021")
     contrail_mitb5 = ContrailsModel(
         encoder_name=config.encoder_name,
         encoder_weight=None,
         arch=config.arch,
         aux_params=config.aux_params,
     )
-    ckpt = Path("./output/exp018/exp018-UNet-mit_b5-fold0.pth")
+    ckpt = Path("./output/exp021/exp021-UNet-mit_b5-fold0.pth")
     logger.info(f"load checkpoint: {ckpt}")
     contrail_mitb5.load_state_dict(torch.load(ckpt))
     contrail_mitb5.eval()
@@ -155,8 +164,8 @@ def main(config_ver: str, debug: bool = False) -> None:
     add_file_handler(
         logger, filename=str(config.output_dir / f"cls_infer_{execute_id}.log")
     )
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # device = torch.device("cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cpu")
     save_dir = Path(f"./input/imgs_with_pseudo_labels_{EXECUTE_TIME}")
     save_dir.mkdir(exist_ok=True, parents=True)
 
@@ -181,7 +190,7 @@ def main(config_ver: str, debug: bool = False) -> None:
             #   imgs: (batch_size, c, h, w)
             #   img_ids: (batch_size, )
 
-            # print(batch)
+            # print(batchk)
             # import pdb
             #
             # pdb.set_trace()
@@ -196,7 +205,6 @@ def main(config_ver: str, debug: bool = False) -> None:
                 outputs = model(imgs)
             outputs = outputs.detach().cpu()
 
-            # TODO: どうやって一つのファイルにimgsとpredsを保存するか
             # メモリで持てるなら後でまとめて保存する
             # 無理そうならここで保存する
             # thrもimg_size=256に対して分析して決める
