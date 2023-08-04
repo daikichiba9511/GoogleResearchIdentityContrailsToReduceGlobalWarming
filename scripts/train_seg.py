@@ -304,7 +304,9 @@ def main(
         save_path = (
             f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
         )
-        earlystopping.save_checkpoint(float("inf"), model, config.output_dir / save_path)
+        earlystopping.save_checkpoint(
+            float("inf"), model, config.output_dir / save_path
+        )
         logger.info(f"## Fold: {fold} End ##")
 
         if run is not None:
@@ -316,4 +318,14 @@ def main(
 
 
 if __name__ == "__main__":
-    typer.run(main)
+    import argparse
+
+    # all: bool = False, debug: bool = False, remake_df: bool = False
+
+    args = argparse.ArgumentParser()
+    args.add_argument("exp_ver", type=str)
+    args.add_argument("--debug", default=False, action="store_true")
+    args.add_argument("--all", default=False, action="store_true")
+    args.add_argument("--remake_df", default=False, action="store_true")
+    # typer.run(main)
+    main(**vars(args.parse_args()))

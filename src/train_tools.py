@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import ttach as tta
 from torch.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_
@@ -129,7 +130,11 @@ class AWP:
     def _attack_step(self) -> None:
         e = 1e-6
         for name, param in self.model.named_parameters():
-            if param.requires_grad and param.grad is not None and self.adv_param in name:
+            if (
+                param.requires_grad
+                and param.grad is not None
+                and self.adv_param in name
+            ):
                 norm1 = torch.norm(param.grad)
                 norm2 = torch.norm(param.data.detach())
                 if norm1 != 0 and not torch.isnan(norm1):
@@ -143,7 +148,11 @@ class AWP:
 
     def _save(self) -> None:
         for name, param in self.model.named_parameters():
-            if param.requires_grad and param.grad is not None and self.adv_param in name:
+            if (
+                param.requires_grad
+                and param.grad is not None
+                and self.adv_param in name
+            ):
                 if name not in self.backup:
                     self.backup[name] = param.data.clone()
                     grad_eps = self.adv_eps * param.abs().detach()
@@ -218,7 +227,9 @@ class EarlyStopping:
     def __call__(self, score: float, model: nn.Module, save_path: Path | str) -> None:
         if self.best_score is None:
             self.best_score = score
-            self.save_checkpoint(score, model=model, save_path=self.save_dir / save_path)
+            self.save_checkpoint(
+                score, model=model, save_path=self.save_dir / save_path
+            )
 
         is_min_update = (
             self.direction == "maximize" and score < self.best_score + self.delta
@@ -243,7 +254,9 @@ class EarlyStopping:
                 f"Detected update Score: best score {self.best_score} --> {score}"
             )
             self.best_score = score
-            self.save_checkpoint(score, model=model, save_path=self.save_dir / save_path)
+            self.save_checkpoint(
+                score, model=model, save_path=self.save_dir / save_path
+            )
             self.counter = 0
 
     def save_checkpoint(self, score: float, model: nn.Module, save_path: Path) -> None:
@@ -419,6 +432,12 @@ def train_one_epoch(
             images = images.contiguous().to(device, non_blocking=True)
             target = target.contiguous().to(device, non_blocking=True)
 
+            target = (
+                F.interpolate(target.unsqueeze(1).float(), size=(256, 256))
+                .squeeze(1)
+                .long()
+            )
+
             if (
                 not is_frozen
                 and freeze_params is not None
@@ -430,7 +449,8 @@ def train_one_epoch(
 
             with autocast(device_type=device.type, enabled=use_amp):
                 outputs = model(images)
-                logits: torch.Tensor = outputs["logits"]
+                logits: torch.Tensor = outputs["preds"]
+                logits = logits.squeeze(1)
                 assert (
                     logits.shape == target.shape
                 ), f"{logits.shape = }, {target.shape = }"
@@ -455,7 +475,8 @@ def train_one_epoch(
                 loss = loss_mask + loss_cls
                 loss /= grad_accum_step_num
 
-            running_losses.update(value=loss.item(), n=batch_size)
+            if loss.item() not in [np.nan, np.inf, float("nan"), -float("nan")]:
+                running_losses.update(value=loss.item(), n=batch_size)
             scaled_loss = scaler.scale(loss)
             if isinstance(scaled_loss, torch.Tensor):
                 scaled_loss.backward()
@@ -560,12 +581,25 @@ def valid_one_epoch(
     criterion_cls: LossFn | None = None,
     log_prefix: str = "",
     aux_params: AuxParams | None = None,
+    use_tta: bool = False,
     debug: bool = False,
 ) -> ValidAssets:
     model.eval()
     valid_losses = AverageMeter(name="valid_loss")
     valid_bces = AverageMeter(name="valid_bce")
     valid_dices = AverageMeter(name="valid_dice")
+
+    if use_tta:
+        transform = tta.Compose(
+            [
+                tta.HorizontalFlip(),
+                tta.VerticalFlip(),
+                tta.Rotate90(angles=[0, 90, 180, 270]),
+            ]
+        )
+        model = tta.SegmentationTTAWrapper(
+            model, transform, merge_mode="mean", output_mask_key="preds"
+        )
 
     with tqdm(
         enumerate(valid_loader),
@@ -584,6 +618,7 @@ def valid_one_epoch(
                     output = model(image)
                 # logits = output["logits"]
                 logits: torch.Tensor = output["preds"]
+                logits = logits.squeeze(1)
                 if target.shape[1:] != (256, 256):
                     target = F.interpolate(
                         target.unsqueeze(1).float(), size=256, mode="bilinear"
@@ -627,6 +662,9 @@ def valid_one_epoch(
             y_preds = y_preds.numpy()
             target = target.numpy()
 
+            assert isinstance(y_preds, np.ndarray)
+            assert isinstance(target, np.ndarray)
+
             # shape: (N, H, W)
             # preds = (y_preds > 0.5).astype(np.uint8)
             # preds = np.array([remove_tiny_pred(pred, min_size=30) for pred in preds])
@@ -649,7 +687,8 @@ def valid_one_epoch(
                     set_trace()
 
             # aggregate metrics
-            valid_losses.update(value=loss.item(), n=batch_size)
+            if loss.item() not in [np.nan, np.inf, float("nan"), float("inf")]:
+                valid_losses.update(value=loss.item(), n=batch_size)
             valid_dices.update(value=valid_metrics["dice"], n=batch_size)
 
             valid_log_assets = {

@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from logging import getLogger
 from typing import Any
 
 import segmentation_models_pytorch as smp
@@ -7,6 +6,8 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+logger = getLogger(__name__)
 
 
 class ContrailsModel(nn.Module):
@@ -18,15 +19,32 @@ class ContrailsModel(nn.Module):
         arch: str = "Unet",
     ) -> None:
         super().__init__()
-        self.model = smp.create_model(
-            arch=arch,
-            encoder_name=encoder_name,
-            encoder_weights=encoder_weight,
-            in_channels=3,
-            classes=1,
-            activation=None,
-            aux_params=aux_params,
-        )
+        encoder_depth = 5
+        decoder_channels = [256, 128, 64, 32, 16]
+
+        if arch == "UNet":
+            self.model = smp.Unet(
+                encoder_name=encoder_name,
+                encoder_weights=encoder_weight,
+                encoder_depth=encoder_depth,
+                decoder_channels=decoder_channels,
+                in_channels=3,
+                classes=1,
+                activation=None,
+                aux_params=aux_params,
+            )
+        else:
+            self.model = smp.create_model(
+                arch=arch,
+                encoder_name=encoder_name,
+                encoder_weights=encoder_weight,
+                encoder_depth=encoder_depth,
+                decoder_channels=decoder_channels,
+                in_channels=3,
+                classes=1,
+                activation=None,
+                aux_params=aux_params,
+            )
 
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         outputs = self.model(images)
@@ -40,8 +58,8 @@ class ContrailsModel(nn.Module):
         preds = nn.functional.interpolate(
             logits, size=(256, 256), mode="bilinear", align_corners=False
         )
-        preds = preds.squeeze(1)
-        logits = logits.squeeze(1)
+        # preds = preds.squeeze(1)
+        # logits = logits.squeeze(1)
 
         # logist: (batch_size, height, width)
         outputs = {
