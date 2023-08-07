@@ -57,6 +57,7 @@ class Config:
     aux_params: dict[str, int | float] | None
 
     max_grad_norm: float
+    grad_accum_step_num: int
 
     epochs: int
     patience: int

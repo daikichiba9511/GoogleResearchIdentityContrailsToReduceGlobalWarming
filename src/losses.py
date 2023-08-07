@@ -80,7 +80,9 @@ def hough_transform(batch, threshold=50, return_coordinates=False):
     cos_thetas = torch.cos(torch.deg2rad(thetas))
     sin_thetas = torch.sin(torch.deg2rad(thetas))
 
-    hough_matrices = torch.Tensor(batch.shape[0], rhos.shape[0] - 1, thetas.shape[0] - 1)
+    hough_matrices = torch.Tensor(
+        batch.shape[0], rhos.shape[0] - 1, thetas.shape[0] - 1
+    )
 
     for i, img in enumerate(batch):
         img = img.squeeze()

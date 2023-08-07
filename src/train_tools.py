@@ -335,6 +335,7 @@ class AugParams:
     do_cutmix: bool
     cutmix_alpha: float
     cutmix_prob: float
+    turn_off_cutmix_epoch: int | None
 
     do_label_noise: bool
     label_noise_prob: float
@@ -406,6 +407,8 @@ def train_one_epoch(
             if (
                 aug_params is not None
                 and aug_params.do_cutmix
+                and aug_params.turn_off_cutmix_epoch is not None
+                and epoch <= aug_params.turn_off_cutmix_epoch
                 and np.random.rand() <= aug_params.cutmix_prob
             ):
                 images, target, _, _ = mixup(
@@ -581,7 +584,7 @@ def valid_one_epoch(
     criterion_cls: LossFn | None = None,
     log_prefix: str = "",
     aux_params: AuxParams | None = None,
-    use_tta: bool = False,
+    use_tta: bool = True,
     debug: bool = False,
 ) -> ValidAssets:
     model.eval()

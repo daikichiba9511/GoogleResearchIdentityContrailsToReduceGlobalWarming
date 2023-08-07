@@ -6,6 +6,9 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from monai.networks.nets.swin_unetr import SwinUNETR
+from monai.networks.nets.unetr import UNETR
+from transformers import SegformerForSemanticSegmentation
 
 logger = getLogger(__name__)
 
@@ -33,6 +36,16 @@ class ContrailsModel(nn.Module):
                 activation=None,
                 aux_params=aux_params,
             )
+        if arch == "SwinUNETR":
+            self.model = SwinUNETR(
+                img_size=(512, 512),
+                in_channels=3,
+                out_channels=1,
+                spatial_dims=2,
+                use_v2=False,
+                use_checkpoint=True,
+            )
+
         else:
             self.model = smp.create_model(
                 arch=arch,
@@ -205,10 +218,6 @@ class ContrailsModelV2(nn.Module):
         return y
 
 
-from monai.networks.nets import UNETR
-from transformers import SegformerForSemanticSegmentation
-
-
 class UNETR_Segformer(nn.Module):
     def __init__(self, img_size: int, dropout: float = 0.2):
         super().__init__()
@@ -259,19 +268,25 @@ class UNETR_Segformer(nn.Module):
 
 
 if __name__ == "__main__":
-    model = ContrailsModelV2()
-    im = torch.randn(2, 3 * 8, 256, 256)
-    out = model(im)
-    print(out.shape)
+    # model = ContrailsModelV2()
+    # im = torch.randn(2, 3 * 8, 256, 256)
+    # out = model(im)
+    # print(out.shape)
+    #
+    # model = UNETR_Segformer(img_size=256)
+    # im = torch.randn(2, 3, 256, 256)
+    # out = model(im)
+    # print(out["logits"].shape)
+    # print(out["preds"].shape)
+    #
+    # model = UNETR_Segformer(img_size=512).cuda()
+    # im = torch.randn(4, 3, 512, 512).cuda()
+    # out = model(im)
+    # print(out["logits"].shape)
+    # print(out["preds"].shape)
 
-    model = UNETR_Segformer(img_size=256)
-    im = torch.randn(2, 3, 256, 256)
-    out = model(im)
-    print(out["logits"].shape)
-    print(out["preds"].shape)
-
-    model = UNETR_Segformer(img_size=512).cuda()
-    im = torch.randn(4, 3, 512, 512).cuda()
+    model = ContrailsModel(encoder_name="swinv2", arch="SwinUNETR")
+    im = torch.randn(8, 3, 512, 512)
     out = model(im)
     print(out["logits"].shape)
     print(out["preds"].shape)

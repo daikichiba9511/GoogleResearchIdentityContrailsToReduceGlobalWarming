@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import albumentations as A
+import torch
 from albumentations.pytorch import ToTensorV2
 
 root = "."
@@ -12,15 +13,16 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp023
+# exp030
 
-copy from exp018
+copy from exp023
 
 ## Purpose
 
 - encoder: mit_b5
 - img_size={IMG_SIZE}
 - with_pseudo_label
+- soft_bce
 
 """
 
@@ -63,14 +65,15 @@ config = {
     "resume_training": False,
     "resume_path": "",
     "positive_only": False,
-    "epochs": 50,
+    "epochs": 30,
     "train_params": {},
     "max_grad_norm": 10.0,
     "patience": 12,
-    # "loss_type": "soft_bce",
-    # "loss_params": {"smooth_factor": 0.1},
-    "loss_type": "dice",
-    "loss_params": {"smooth": 1.0, "mode": "binary"},
+    "grad_accum_step_num": 64 // 8,
+    "loss_type": "soft_bce",
+    "loss_params": {"smooth_factor": 0.0, "pos_weight": torch.tensor(7.31)},
+    # "loss_type": "dice",
+    # "loss_params": {"smooth": 1.0, "mode": "binary"},
     "cls_weight": 0.0,
     "aux_params": None,
     # "aux_params": {"dropout": 0.5, "classes": 1},
@@ -78,26 +81,27 @@ config = {
     "optimizer_params": {
         # "lr": 2e-4,
         # "lr": 3e-5,
-        "lr": 1e-5,
+        # "lr": 5e-4,
+        "lr": 1e-3,
         "weight_decay": 0.0,
     },
-    # "scheduler_type": "cosineannealinglr",
-    # "scheduler_params": {
-    #     "T_max": 2,  # iterationの最大(周期の長さ)
-    #     "eta_min": 1e-6,  # lr最小値
-    #     "last_epoch": -1,
-    # },
-    "scheduler_type": "cosine_with_warmup",
+    "scheduler_type": "cosineannealinglr",
     "scheduler_params": {
-        "warmup_ratio": 0.02,
+        "T_max": 30,  # iterationの最大(周期の長さ)
+        "eta_min": 1e-6,  # lr最小値
+        "last_epoch": -1,
     },
+    # "scheduler_type": "cosine_with_warmup",
+    # "scheduler_params": {
+    #     "warmup_ratio": 0.02,
+    # },
     "train_aug_list": [
         # A.RandomResizedCrop(height=IMG_SIZE, width=IMG_SIZE, scale=(0.8, 1.2), p=1.0),
         # A.CropNonEmptyMaskIfExists(height=512, width=512, p=1.0),
         A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
         A.RandomRotate90(p=0.5),
-        A.HorizontalFlip(p=0.5),
-        A.VerticalFlip(p=0.5),
+        A.HorizontalFlip(p=0.2),
+        A.VerticalFlip(p=0.2),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],
@@ -118,6 +122,7 @@ config = {
         do_cutmix=True,
         cutmix_alpha=1.0,
         cutmix_prob=0.5,
+        turn_off_cutmix_epoch=6,
         do_label_noise=False,
         label_noise_prob=0.5,
     ),
@@ -134,5 +139,5 @@ if __name__ == "__main__":
 
     pprint.pprint(config)
     print("## init config ##")
-    config_ver = "exp002"
+    config_ver = "exp030"
     pprint.pprint(init_config(Config, f"configs.{config_ver}"))

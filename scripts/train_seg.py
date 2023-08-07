@@ -270,6 +270,7 @@ def main(
                 aug_params=aug_params,
                 schedule_per_step=schedule_per_step,
                 max_grad_norm=config.max_grad_norm,
+                grad_accum_step_num=config.grad_accum_step_num,
             )
             valid_assets = valid_one_epoch(
                 fold=fold,
