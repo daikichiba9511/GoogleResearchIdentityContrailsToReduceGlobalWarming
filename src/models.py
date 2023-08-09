@@ -22,8 +22,10 @@ class ContrailsModel(nn.Module):
         arch: str = "Unet",
     ) -> None:
         super().__init__()
-        encoder_depth = 5
-        decoder_channels = [256, 128, 64, 32, 16]
+        encoder_depth = 5 if not encoder_name.startswith("tu-convnext") else 4
+        decoder_channels = (
+            [256, 128, 64, 32, 16] if encoder_depth == 5 else [256, 128, 64, 32]
+        )
 
         if arch == "UNet":
             self.model = smp.Unet(

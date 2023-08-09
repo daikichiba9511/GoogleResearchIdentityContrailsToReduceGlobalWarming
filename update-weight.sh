@@ -13,6 +13,8 @@ set -e
 
 # TTA+tf-effv2_s
 SRC_NAME1="exp027" # 8/6
+SRC_NAME2="exp028" # 8/7
+SRC_NAME2="exp030" # 8/7
 
 rm -rf ./output/sub/*.pth
 ls "./output/sub"
@@ -20,7 +22,7 @@ rm "./output/sub/version.txt"
 
 LOG_MSG="update: "
 
-for src_name in $SRC_NAME1; do
+for src_name in $SRC_NAME1 $SRC_NAME2; do
 	echo " ######## Source: ${src_name} ######### "
 	ls "./output/${src_name}"
 	echo "Version: ${src_name}" >>./output/sub/version.txt

@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
-from typing import Final, Sequence
+from typing import Any, Final, Sequence, TypeVar
 
 import cv2
 import matplotlib.pyplot as plt
@@ -35,10 +35,27 @@ def add_file_handler(
     logger.addHandler(handler)
 
 
+def is_nan(x: np.ndarray | float) -> bool:
+    if isinstance(x, np.ndarray):
+        return bool(np.isnan(x).any())
+
+    return np.isnan(x)
+
+
 def get_called_time() -> str:
     """Get current time in JST (Japan Standard Time = UTC+9)"""
     now = datetime.utcnow() + timedelta(hours=9)
     return now.strftime("%Y%m%d%H%M%S")
+
+
+_T = TypeVar("_T")
+
+
+def flatten_dict(values: Sequence[dict[str, _T]]) -> dict[str, _T]:
+    flattend = {}
+    for value in values:
+        flattend.update(value)
+    return flattend
 
 
 def list_to_string(x: list[int]) -> str:

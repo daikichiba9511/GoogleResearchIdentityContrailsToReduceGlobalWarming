@@ -25,6 +25,7 @@ from src.train_tools import (
     AugParams,
     AuxParams,
     EarlyStopping,
+    make_tta_model,
     scheduler_step,
     seed_everything,
     train_one_epoch,
@@ -156,7 +157,7 @@ def main(
     add_file_handler(logger, str(log_file_path))
 
     logger.info(f"config_path: {config_path}")
-    logger.info(f"{config.__dict__}")
+    logger.info(f"{pprint.pformat(config.__dict__)}")
 
     train_fold = list(range(config.n_splits)) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -259,13 +260,13 @@ def main(
                 epoch=epoch,
                 model=model,
                 train_loader=train_loader,
-                criterion=loss,
+                loss_fn=loss,
                 optimizer=optimizer,
                 scheduler=scheduer,
                 scaler=scaler,
                 device=device,
                 use_amp=use_amp,
-                criterion_cls=cls_loss,
+                cls_loss_fn=cls_loss,
                 aux_params=aux_params,
                 aug_params=aug_params,
                 schedule_per_step=schedule_per_step,
@@ -277,11 +278,12 @@ def main(
                 epoch=epoch,
                 model=model,
                 valid_loader=valid_loader,
-                criterion=loss,
+                loss_fn=loss,
                 device=device,
                 metrics_fn=calc_metrics,
                 use_amp=use_amp,
                 debug=debug,
+                make_tta_model_fn=make_tta_model,
             )
             scheduler_step(scheduer, valid_assets.loss)
 
