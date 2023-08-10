@@ -13,7 +13,7 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp034
+# exp033
 
 copy from exp030
 
@@ -39,7 +39,9 @@ config = {
     # "encoder_name": "timm-resnest200e",  # 86M
     # "encoder_name": "timm-efficientnet-b8",
     # "encoder_name": "mit_b5",
-    "encoder_name": "tu-convnext_small",
+    # "encoder_name": "tu-convnext_small",
+    # "encoder_name": "tu-convnextv2_huge", too big, hard to train
+    "encoder_name": "tu-convnextv2_large",
     "encoder_weight": "imagenet",
     # "encoder_weight": "advprop",
     "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
@@ -60,7 +62,8 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 8 * 4,
+    "use_amp": True,
+    "train_batch_size": 8,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
@@ -70,7 +73,7 @@ config = {
     "train_params": {},
     "max_grad_norm": 10.0,
     "patience": 12,
-    "grad_accum_step_num": 64 // (8 * 4),
+    "grad_accum_step_num": 64 // (8 * 2),
     "loss_type": "soft_bce",
     "loss_params": {"smooth_factor": 0.0, "pos_weight": torch.tensor(7.31)},
     # "loss_type": "dice",
@@ -80,10 +83,10 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        # "lr": 2e-4,
+        "lr": 3e-4,
         # "lr": 3e-5,
         # "lr": 5e-4,
-        "lr": 1e-3,
+        # "lr": 1e-3,
         "weight_decay": 0.0,
     },
     "scheduler_type": "cosineannealinglr",
@@ -120,7 +123,7 @@ config = {
         do_mixup=False,
         mixup_alpha=1.0,
         mixup_prob=0.5,
-        do_cutmix=False,
+        do_cutmix=True,
         cutmix_alpha=1.0,
         cutmix_prob=0.5,
         turn_off_cutmix_epoch=6,

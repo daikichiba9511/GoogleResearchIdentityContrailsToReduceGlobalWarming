@@ -139,7 +139,10 @@ def get_loaders(
 
 
 def main(
-    exp_ver: str, all: bool = False, debug: bool = False, remake_df: bool = False
+    exp_ver: str,
+    all: bool = False,
+    debug: bool = False,
+    remake_df: bool = False,
 ) -> None:
     """
     Args:
@@ -161,7 +164,7 @@ def main(
 
     train_fold = list(range(config.n_splits)) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    use_amp = True
+    use_amp = config.use_amp
 
     for fold in range(config.n_splits):
         if fold not in train_fold:

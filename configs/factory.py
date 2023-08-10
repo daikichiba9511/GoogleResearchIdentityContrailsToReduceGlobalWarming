@@ -84,6 +84,8 @@ class Config:
     test_aug_list: list[Callable]
     aug_params: AugParamsDict
 
+    use_amp: bool
+
     # -- Inference
     test_batch_size: int
     threshold: float

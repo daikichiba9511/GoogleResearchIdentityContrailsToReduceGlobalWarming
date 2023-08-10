@@ -62,6 +62,7 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
+    "use_amp": True,
     "train_batch_size": 8,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
@@ -82,9 +83,9 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        # "lr": 2e-4,
+        "lr": 3e-4,
         # "lr": 3e-5,
-        "lr": 5e-4,
+        # "lr": 5e-4,
         # "lr": 1e-3,
         "weight_decay": 0.0,
     },

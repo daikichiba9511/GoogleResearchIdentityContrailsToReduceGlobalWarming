@@ -8,9 +8,50 @@ import torch.nn as nn
 import torch.nn.functional as F
 from monai.networks.nets.swin_unetr import SwinUNETR
 from monai.networks.nets.unetr import UNETR
-from transformers import SegformerForSemanticSegmentation
+from transformers import (
+    OneFormerImageProcessor,
+    OneFormerModel,
+    SegformerForSemanticSegmentation,
+)
 
 logger = getLogger(__name__)
+
+
+# TODO: まだ動かせてない
+# ImageProcessorをDataset側に持たせた方が良いかも
+# Ref:
+# https://github.com/NielsRogge/Transformers-Tutorials/blob/master/MaskFormer/Fine-tuning/Fine_tuning_MaskFormer_on_a_panoptic_dataset.ipynb
+class OneFormerForwarder(nn.Module):
+    def __init__(self):
+        super().__init__()
+        # file = "shi-labs/oneformer_ade20k_dinat_large"
+        file = "shi-labs/oneformer_ade20k_swin_tiny"
+        self.model = OneFormerModel.from_pretrained(file)  # type: ignore
+        # self.processor = OneFormerImageProcessor(
+        #     do_resize=False,
+        #     do_normalize=False,
+        #     do_rescale=False,
+        #     repo_path="shi-labs/oneformer_ade20k_swin_tiny",
+        # )
+        self.processor = OneFormerImageProcessor.from_pretrained(file)
+
+    def __call__(self, x: torch.Tensor) -> torch.Tensor:
+        if (
+            isinstance(self.model, OneFormerModel)
+            and self.processor is not None
+            and isinstance(self.processor, OneFormerImageProcessor)
+        ):
+            # x: (B, C, H, W)
+            input = self.processor(x, ["semantic"], return_tensors="pt")
+            # print(input)
+            output = self.model(**input)
+            preds = self.processor.post_process_instance_segmentation(
+                output, target_sizes=([(x.shape[2], x.shape[3])] * len(x))
+            )
+            print(preds)
+            return preds[0]["semantic"]
+
+        raise NotImplementedError
 
 
 class ContrailsModel(nn.Module):
@@ -22,9 +63,16 @@ class ContrailsModel(nn.Module):
         arch: str = "Unet",
     ) -> None:
         super().__init__()
-        encoder_depth = 5 if not encoder_name.startswith("tu-convnext") else 4
+        encoder_depth = (
+            5
+            if not encoder_name.startswith("tu-convnext")
+            # or not encoder_name.startswith("tu-maxvit")
+            else 4
+        )
         decoder_channels = (
-            [256, 128, 64, 32, 16] if encoder_depth == 5 else [256, 128, 64, 32]
+            [256, 128, 64, 32, 16]
+            if encoder_depth == 5 or not encoder_name.startswith("tu-maxvit")
+            else [256, 128, 64, 32]
         )
 
         if arch == "UNet":
@@ -33,12 +81,13 @@ class ContrailsModel(nn.Module):
                 encoder_weights=encoder_weight,
                 encoder_depth=encoder_depth,
                 decoder_channels=decoder_channels,
+                decoder_use_batchnorm=True,
                 in_channels=3,
                 classes=1,
                 activation=None,
                 aux_params=aux_params,
             )
-        if arch == "SwinUNETR":
+        elif arch == "SwinUNETR":
             self.model = SwinUNETR(
                 img_size=(512, 512),
                 in_channels=3,
@@ -48,6 +97,8 @@ class ContrailsModel(nn.Module):
                 use_checkpoint=True,
             )
 
+        elif arch == "OneFormer":
+            self.model = OneFormerForwarder()
         else:
             self.model = smp.create_model(
                 arch=arch,
@@ -287,8 +338,22 @@ if __name__ == "__main__":
     # print(out["logits"].shape)
     # print(out["preds"].shape)
 
-    model = ContrailsModel(encoder_name="swinv2", arch="SwinUNETR")
+    # model = ContrailsModel(encoder_name="swinv2", arch="SwinUNETR")
+    # im = torch.randn(8, 3, 512, 512)
+    # out = model(im)
+    # print(out["logits"].shape)
+    # print(out["preds"].shape)
+
+    model = ContrailsModel(encoder_name="tu-maxvit_small_tf_512", arch="Unet")
+    # model = torch.compile(model)
     im = torch.randn(8, 3, 512, 512)
     out = model(im)
     print(out["logits"].shape)
     print(out["preds"].shape)
+
+    # model = ContrailsModel(encoder_name="swin", arch="OneFormer")
+    # # model = torch.compile(model)
+    # im = torch.randn(8, 3, 512, 512).clip(0, 1)
+    # out = model(im)
+    # print(out["logits"].shape)
+    # print(out["preds"].shape)
