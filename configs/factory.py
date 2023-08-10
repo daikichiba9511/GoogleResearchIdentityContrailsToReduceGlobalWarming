@@ -22,7 +22,7 @@ class AugParamsDict(TypedDict):
     do_cutmix: bool
     cutmix_alpha: float
     cutmix_prob: float
-    turn_off_cutmix_epoch: float | None
+    turn_off_cutmix_epoch: int | None
 
     do_label_noise: bool
     label_noise_prob: float

@@ -138,6 +138,51 @@ def plot_preds_with_label_on_image(
     return fig, ax
 
 
+def plot_a_label_on_a_image(
+    image: np.ndarray,
+    label: np.ndarray,
+    figsize: tuple[int, int] = (10, 10),
+) -> tuple[plt.Figure, plt.Axes]:
+    fig, ax = plt.subplots(1, 1, figsize=figsize)
+    if not isinstance(ax, plt.Axes):
+        raise ValueError("image must be plt.Axes")
+
+    if not isinstance(fig, plt.Figure):
+        raise ValueError("image must be plt.Figure")
+
+    color_label = np.zeros((*label.shape, 3))
+    color_label[label == 1] = (0, 1, 0)
+
+    ax.imshow(image)
+    ax.imshow(color_label, alpha=0.5, label="label")
+
+    return fig, ax
+
+
+def plot_images_with_labels(
+    images: np.ndarray,
+    labels: np.ndarray,
+    figsize: tuple[int, int] = (10, 10),
+) -> tuple[np.ndarray, np.ndarray]:
+    if len(images) != len(labels):
+        raise ValueError("image and label must have the same length")
+
+    if len(images) > 5:
+        raise ValueError("image and label must be less than 5")
+
+    fig, ax = plt.subplots(1, len(images), figsize=figsize)
+    assert isinstance(ax, np.ndarray) and isinstance(fig, np.ndarray)
+
+    for i in range(len(images)):
+        color_label = np.zeros((*labels[i].shape, 3))
+        color_label[labels[i] == 1] = (0, 1, 0)
+
+        ax[i].imshow(images[i])
+        ax[i].imshow(color_label, alpha=0.5, label="label")
+
+    return fig, ax
+
+
 def filter_tiny_objects(image: np.ndarray, thr: int) -> np.ndarray:
     _image = image.copy()
     # _image = image

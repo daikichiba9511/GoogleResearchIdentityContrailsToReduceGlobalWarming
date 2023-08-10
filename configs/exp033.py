@@ -40,6 +40,7 @@ config = {
     # "encoder_name": "timm-efficientnet-b8",
     # "encoder_name": "mit_b5",
     # "encoder_name": "tu-convnext_small",
+    # "encoder_name": "tu-convnextv2_huge", too big, hard to train
     "encoder_name": "tu-convnextv2_large",
     "encoder_weight": "imagenet",
     # "encoder_weight": "advprop",
@@ -61,7 +62,7 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "train_batch_size": 8 * 2,
+    "train_batch_size": 8,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
@@ -83,8 +84,8 @@ config = {
     "optimizer_params": {
         # "lr": 2e-4,
         # "lr": 3e-5,
-        # "lr": 5e-4,
-        "lr": 1e-3,
+        "lr": 5e-4,
+        # "lr": 1e-3,
         "weight_decay": 0.0,
     },
     "scheduler_type": "cosineannealinglr",

@@ -1,5 +1,3 @@
-"""読み込んだ画像にラベルを含んでいるかを推論するスクリプト
-"""
 import multiprocessing as mp
 import uuid
 from pathlib import Path
@@ -76,7 +74,9 @@ def get_loader(
 
 
 class EnsembleModel:
-    def __init__(self, models: Sequence[torch.nn.Module], on_cuda: bool = False) -> None:
+    def __init__(
+        self, models: Sequence[torch.nn.Module], on_cuda: bool = False
+    ) -> None:
         self.models = models
         if on_cuda:
             self.models = [model.cuda() for model in self.models]

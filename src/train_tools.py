@@ -591,6 +591,7 @@ def train_one_epoch(
     optimizer: optim.Optimizer,
     scheduler: optim.lr_scheduler.LRScheduler,
     device: torch.device,
+    metric_names: list[str] = ["loss", "cls_acc"],
     max_grad_norm: float = 1000.0,
     cls_loss_fn: LossFn | None = None,
     schedule_per_step: bool = False,
@@ -602,7 +603,6 @@ def train_one_epoch(
     aux_params: AuxParams | None = None,
     freeze_params: FreezeParams | None = None,
     forward_fn: ForwardFn = default_segmentation_forward_fn,
-    metric_names: list[str] = ["loss", "cls_acc"],
 ) -> TrainAssets:
     """Train one epoch
 
@@ -662,100 +662,95 @@ def train_one_epoch(
     if aux_params is not None and "aux_loss" not in metric_names:
         metric_names.append("aux_loss")
     average_meters = init_average_meters(metric_names=metric_names)
-
-    with tqdm(
+    pbar = tqdm(
         enumerate(train_loader),
         total=len(train_loader),
         dynamic_ncols=True,
         desc="Train Per Epoch",
-    ) as pbar:
-        for step, batch in pbar:
-            model.train()
-            # TODO: Dataset修正して書き直す
-            batch = {"image": batch[0], "target": batch[1]}
-            batch = augmentation_fn(aug_params=aug_params, epoch=epoch, batch=batch)
-            batch = send_tensor_to_device(batch, device=device)
-            batch_size = batch["target"].size(0)
+    )
+    for step, batch in pbar:
+        model.train()
+        # TODO: Dataset修正して書き直す
+        batch = {"image": batch[0], "target": batch[1]}
+        batch = augmentation_fn(aug_params=aug_params, epoch=epoch, batch=batch)
+        batch = send_tensor_to_device(batch, device=device)
+        batch_size = batch["target"].size(0)
 
-            if (
-                not is_frozen
-                and freeze_params is not None
-                and epoch > freeze_params.start_epoch_to_freeze_model
-            ):
-                logger.info(f"freeze model with {freeze_params.freeze_keys}")
-                _freeze_model(model, freeze_keys=freeze_params.freeze_keys)
-                is_frozen = True  # cache state of freeze
+        if (
+            not is_frozen
+            and freeze_params is not None
+            and epoch > freeze_params.start_epoch_to_freeze_model
+        ):
+            logger.info(f"freeze model with {freeze_params.freeze_keys}")
+            _freeze_model(model, freeze_keys=freeze_params.freeze_keys)
+            is_frozen = True  # cache state of freeze
 
-            with autocast(device_type=device.type, enabled=use_amp):
-                output = forward_fn(model=model, batch=batch)
+        with autocast(device_type=device.type, enabled=use_amp):
+            output = forward_fn(model=model, batch=batch)
 
-                # signature of loss_fn: (torch.Tensor, torch.Tensor) -> torch.Tensor
-                loss = loss_fn(output.preds, output.targets)
+        # signature of loss_fn: (torch.Tensor, torch.Tensor) -> torch.Tensor
+        loss = loss_fn(output.preds, output.targets)
 
-                if (
-                    aux_params is not None
-                    and output.cls_preds is not None
-                    and cls_loss_fn is not None
-                ):
-                    cls_preds = output.cls_preds
-                    cls_targets = _make_cls_label(output.targets)
-                    cls_loss = cls_loss_fn(cls_preds, cls_targets)
-                    cls_loss = aux_params.cls_weight * cls_loss
-                    loss += cls_loss
+        if (
+            aux_params is not None
+            and output.cls_preds is not None
+            and cls_loss_fn is not None
+        ):
+            cls_preds = output.cls_preds
+            cls_targets = _make_cls_label(output.targets)
+            cls_loss = cls_loss_fn(cls_preds, cls_targets)
+            cls_loss = aux_params.cls_weight * cls_loss
+            loss += cls_loss
 
-                    cls_preds = (cls_preds > aux_params.cls_threshold).long()
-                    acc = (cls_preds == cls_targets).sum() / batch_size
+            cls_preds = (cls_preds > aux_params.cls_threshold).long()
+            acc = (cls_preds == cls_targets).sum() / batch_size
 
-                    wandb.log(
-                        {"train/cls_loss": cls_loss.item(), "train/cls_acc": acc.item()}
-                    )
+            wandb.log({"train/cls_loss": cls_loss.item(), "train/cls_acc": acc.item()})
 
-                loss /= grad_accum_step_num
+        loss /= grad_accum_step_num
 
-            if not my_utils.is_nan(loss.item()):
-                average_meters["loss"].update(value=loss.item(), n=batch_size)
+        if not my_utils.is_nan(loss.item()):
+            average_meters["loss"].update(value=loss.item(), n=batch_size)
 
-            # --- Backprop
-            scaled_loss = scaler.scale(loss)
-            if not isinstance(scaled_loss, torch.Tensor):
-                raise ValueError(
-                    f"Not Expected {scaled_loss = }, {type(scaled_loss) = }"
-                )
-            scaled_loss.backward()
+        # --- Backprop
+        scaled_loss = scaler.scale(loss)
+        if not isinstance(scaled_loss, torch.Tensor):
+            raise ValueError(f"Not Expected {scaled_loss = }, {type(scaled_loss) = }")
+        scaled_loss.backward()
 
-            # --- AWP
-            # NOTE: AWP should be called at last some epochs
-            if (
-                awp is not None
-                and awp_params is not None
-                and epoch >= awp_params.start_epoch
-            ):
-                awp.attack_backward(batch["image"], batch["target"], epoch)
+        # --- AWP
+        # NOTE: AWP should be called at last some epochs
+        if (
+            awp is not None
+            and awp_params is not None
+            and epoch >= awp_params.start_epoch
+        ):
+            awp.attack_backward(batch["image"], batch["target"], epoch)
 
-            if (step + 1) % grad_accum_step_num == 0:
-                clip_grad_norm_(model.parameters(), max_grad_norm)
+        if (step + 1) % grad_accum_step_num == 0:
+            clip_grad_norm_(model.parameters(), max_grad_norm)
 
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad(set_to_none=True)
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
 
-                if schedule_per_step:
-                    scheduler_step(scheduler, loss=loss.item())
+            if schedule_per_step:
+                scheduler_step(scheduler, loss=loss.item())
 
-                def _make_logging_assets(name: str) -> dict[str, float]:
-                    return {
-                        f"train/fold{fold}_{name}_avg": average_meters[name].avg,
-                        f"train/fold{fold}_{name}_std": average_meters[name].std,
-                    }
+            def _make_logging_assets(name: str) -> dict[str, float]:
+                return {
+                    f"train/fold{fold}_{name}_avg": average_meters[name].avg,
+                    f"train/fold{fold}_{name}_std": average_meters[name].std,
+                }
 
-                log_assets = list(map(_make_logging_assets, metric_names))
-                log_assets = my_utils.flatten_dict(log_assets)
-                learning_rate = optimizer.param_groups[0]["lr"]
-                log_assets.update({"lr": learning_rate})
+            log_assets = list(map(_make_logging_assets, metric_names))
+            log_assets = my_utils.flatten_dict(log_assets)
+            learning_rate = optimizer.param_groups[0]["lr"]
+            log_assets.update({"lr": learning_rate})
 
-                wandb.log(log_assets)
-                log_assets.update({"epoch": epoch})
-                pbar.set_postfix(log_assets)
+            wandb.log(log_assets)
+            log_assets.update({"epoch": epoch})
+            pbar.set_postfix(log_assets)
 
     train_assets = TrainAssets(
         loss=average_meters["loss"].avg,
@@ -843,81 +838,79 @@ def valid_one_epoch(
     if make_tta_model_fn is not None:
         model = make_tta_model_fn(model)
 
-    with tqdm(
+    pbar = tqdm(
         enumerate(valid_loader),
         total=len(valid_loader),
         smoothing=0,
         dynamic_ncols=True,
         desc="Valid Per Epoch",
-    ) as pbar:
-        for step, batch in pbar:
-            batch_size = batch[1].size(0)
-            batch = send_tensor_to_device(
-                batch={"image": batch[0], "target": batch[1]}, device=device
-            )
+    )
+    for step, batch in pbar:
+        batch_size = batch[1].size(0)
+        batch = send_tensor_to_device(
+            batch={"image": batch[0], "target": batch[1]}, device=device
+        )
 
-            with (
-                torch.inference_mode(),
-                autocast(device_type=device.type, enabled=use_amp),
-            ):
-                output = forward_fn(model=model, batch=batch)
-                loss = loss_fn(output.preds, output.targets)
+        with (
+            torch.inference_mode(),
+            autocast(device_type=device.type, enabled=use_amp),
+        ):
+            output = forward_fn(model=model, batch=batch)
 
-                # --- For Aux Heads
-                # cls: (N, 1)
-                if (
-                    aux_params is not None
-                    and output.cls_preds is not None
-                    and cls_loss_fn is not None
-                ):
-                    cls_preds = output.cls_preds
-                    cls_target = _make_cls_label(output.targets)
-                    cls_target = cls_target.to(device, non_blocking=True)
-                    cls_loss = cls_loss_fn(cls_preds, cls_target)
-                    cls_loss = aux_params.cls_weight * cls_loss
-                    loss += cls_loss
-                    cls_bce = F.binary_cross_entropy_with_logits(cls_preds, cls_target)
-                    cls_accs = ((cls_preds > 0.5) == cls_target).sum() / batch_size
+        loss = loss_fn(output.preds, output.targets)
 
-                    wandb.log(
-                        {
-                            f"valid/fold{fold}_cls_loss": cls_loss.item(),
-                            f"valid/fold{fold}_cls_acc": cls_accs.item(),
-                            f"valid/fold{fold}_cls_bce": cls_bce.item(),
-                        }
-                    )
-
-            postprocess_outputs = postprocess_fn(
-                preds=output.preds, targets=output.targets
-            )
-            valid_metrics = metrics_fn(
-                preds=postprocess_outputs.preds, target=postprocess_outputs.targets
-            )
-            valid_metrics.update({"loss": loss.item()})
-
-            # aggregate metrics
-            if not my_utils.is_nan(loss.item()):
-                average_meters["loss"].update(value=loss.item(), n=batch_size)
-
-            # -- logging metrics
-            def _update_metric(name: str) -> None:
-                metric_value = valid_metrics[name]
-                average_meters[name].update(value=metric_value, n=batch_size)
-
-            list(map(_update_metric, metric_names))
-
-            def _make_logging_assets(name: str) -> dict[str, float]:
-                return {
-                    f"valid/fold{fold}_{name}_avg": average_meters[name].avg,
-                    f"valid/fold{fold}_{name}_std": average_meters[name].std,
+        # --- For Aux Heads
+        # cls: (N, 1)
+        if (
+            aux_params is not None
+            and output.cls_preds is not None
+            and cls_loss_fn is not None
+        ):
+            cls_preds = output.cls_preds
+            cls_target = _make_cls_label(output.targets)
+            cls_target = cls_target.to(device, non_blocking=True)
+            cls_loss = cls_loss_fn(cls_preds, cls_target)
+            cls_loss = aux_params.cls_weight * cls_loss
+            loss += cls_loss
+            cls_bce = F.binary_cross_entropy_with_logits(cls_preds, cls_target)
+            cls_accs = ((cls_preds > 0.5) == cls_target).sum() / batch_size
+            wandb.log(
+                {
+                    f"valid/fold{fold}_cls_loss": cls_loss.item(),
+                    f"valid/fold{fold}_cls_acc": cls_accs.item(),
+                    f"valid/fold{fold}_cls_bce": cls_bce.item(),
                 }
+            )
 
-            valid_log_assets = list(map(_make_logging_assets, metric_names))
-            valid_log_assets = my_utils.flatten_dict(valid_log_assets)
-            wandb.log(valid_log_assets)
+        postprocess_outputs = postprocess_fn(preds=output.preds, targets=output.targets)
+        valid_metrics = metrics_fn(
+            preds=postprocess_outputs.preds, target=postprocess_outputs.targets
+        )
+        valid_metrics.update({"loss": loss.item()})
 
-            valid_log_assets.update({"epoch": epoch})
-            pbar.set_postfix(valid_log_assets)
+        # aggregate metrics
+        if not my_utils.is_nan(loss.item()):
+            average_meters["loss"].update(value=loss.item(), n=batch_size)
+
+        # -- logging metrics
+        def _update_metric(name: str) -> None:
+            metric_value = valid_metrics[name]
+            average_meters[name].update(value=metric_value, n=batch_size)
+
+        list(map(_update_metric, metric_names))
+
+        def _make_logging_assets(name: str) -> dict[str, float]:
+            return {
+                f"valid/fold{fold}_{name}_avg": average_meters[name].avg,
+                f"valid/fold{fold}_{name}_std": average_meters[name].std,
+            }
+
+        valid_log_assets = list(map(_make_logging_assets, metric_names))
+        valid_log_assets = my_utils.flatten_dict(valid_log_assets)
+        wandb.log(valid_log_assets)
+
+        valid_log_assets.update({"epoch": epoch})
+        pbar.set_postfix(valid_log_assets)
 
     valid_assets = ValidAssets(
         loss=average_meters["loss"].avg, dice=average_meters["dice"].avg
