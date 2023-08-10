@@ -9,8 +9,8 @@ import torch.nn.functional as F
 from monai.networks.nets.swin_unetr import SwinUNETR
 from monai.networks.nets.unetr import UNETR
 from transformers import (
-    OneFormerImageProcessor,
     OneFormerModel,
+    OneFormerProcessor,
     SegformerForSemanticSegmentation,
 )
 
@@ -33,23 +33,22 @@ class OneFormerForwarder(nn.Module):
         #     do_rescale=False,
         #     repo_path="shi-labs/oneformer_ade20k_swin_tiny",
         # )
-        self.processor = OneFormerImageProcessor.from_pretrained(file)
+        self.processor = OneFormerProcessor.from_pretrained(file)
 
     def __call__(self, x: torch.Tensor) -> torch.Tensor:
         if (
             isinstance(self.model, OneFormerModel)
             and self.processor is not None
-            and isinstance(self.processor, OneFormerImageProcessor)
+            and isinstance(self.processor, OneFormerProcessor)
         ):
             # x: (B, C, H, W)
+            # ここがうまくいかない
+            # x = (x - x.mean()) / (x.std() + 1e-8)
+            x = (x - x.min()) / ((x.max() - x.min()) + 1e-8)
             input = self.processor(x, ["semantic"], return_tensors="pt")
-            # print(input)
             output = self.model(**input)
-            preds = self.processor.post_process_instance_segmentation(
-                output, target_sizes=([(x.shape[2], x.shape[3])] * len(x))
-            )
-            print(preds)
-            return preds[0]["semantic"]
+            print(output)
+            return output.transformer_decoder_mask_predictions
 
         raise NotImplementedError
 
@@ -61,21 +60,31 @@ class ContrailsModel(nn.Module):
         encoder_weight: str | None = None,
         aux_params: dict[str, Any] | None = None,
         arch: str = "Unet",
+        trainable_downsampling: bool = False,
     ) -> None:
         super().__init__()
-        encoder_depth = (
-            5
-            if not encoder_name.startswith("tu-convnext")
-            # or not encoder_name.startswith("tu-maxvit")
-            else 4
-        )
-        decoder_channels = (
-            [256, 128, 64, 32, 16]
-            if encoder_depth == 5 or not encoder_name.startswith("tu-maxvit")
-            else [256, 128, 64, 32]
-        )
+        if encoder_name.startswith("tu-convnext") or encoder_name.startswith(
+            "tu-maxvit"
+        ):
+            encoder_depth = 4
+        else:
+            encoder_depth = 5
 
-        if arch == "UNet":
+        pop_last_block = False
+        if encoder_name.startswith("tu-convnext"):
+            decoder_channels = [256, 128, 64, 32]
+
+        elif encoder_name.startswith("tu-maxvit"):
+            # NOTE:
+            # docoderの最後のブロックをpopして64->32の変換からSegmentationHeadに渡してる
+            # ので、Headは64で初期化するのに64 -> 64にする
+            # SegmentationHeadはchannel方向の集約のみなのでOK
+            decoder_channels = [256, 128, 64, 64]
+            pop_last_block = True
+        else:
+            decoder_channels = [256, 128, 64, 32, 16]
+
+        if arch == "Unet":
             self.model = smp.Unet(
                 encoder_name=encoder_name,
                 encoder_weights=encoder_weight,
@@ -87,6 +96,9 @@ class ContrailsModel(nn.Module):
                 activation=None,
                 aux_params=aux_params,
             )
+            if pop_last_block:
+                self.model.decoder.blocks.pop(-1)
+
         elif arch == "SwinUNETR":
             self.model = SwinUNETR(
                 img_size=(512, 512),
@@ -112,6 +124,15 @@ class ContrailsModel(nn.Module):
                 aux_params=aux_params,
             )
 
+        if trainable_downsampling:
+            # NOTE:
+            # IN : torch.nn.Conv2d(1,1,kernel_size=(5,5),stride=2,padding=2)(torch.randn(3,1,512,512)).shape
+            # OUT: torch.Size([3, 1, 256, 256])
+            # padding=2で微妙に足りない分を補う
+            self.downsample2x = nn.Conv2d(1, 1, kernel_size=5, stride=2, padding=2)
+        else:
+            self.downsample2x = nn.AvgPool2d(kernel_size=2, stride=2)
+
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         outputs = self.model(images)
         if isinstance(outputs, tuple):
@@ -121,9 +142,17 @@ class ContrailsModel(nn.Module):
             logits = outputs
             cls_logits = None
 
-        preds = nn.functional.interpolate(
-            logits, size=(256, 256), mode="bilinear", align_corners=False
-        )
+        if logits.shape[-1] != 256:
+            # preds = nn.functional.interpolate(
+            #     # logits, size=(256, 256), mode="bicubic", align_corners=False
+            #     logits,
+            #     size=(256, 256),
+            #     mode="bilinear",
+            #     align_corners=False,
+            # )
+            preds = self.downsample2x(logits)
+        else:
+            preds = logits
         # preds = preds.squeeze(1)
         # logits = logits.squeeze(1)
 
@@ -351,9 +380,16 @@ if __name__ == "__main__":
     print(out["logits"].shape)
     print(out["preds"].shape)
 
+    model = ContrailsModel(encoder_name="tu-convnext_small", arch="Unet")
+    # model = torch.compile(model)
+    im = torch.randn(8, 3, 512, 512)
+    out = model(im)
+    print(out["logits"].shape)
+    print(out["preds"].shape)
+
     # model = ContrailsModel(encoder_name="swin", arch="OneFormer")
     # # model = torch.compile(model)
-    # im = torch.randn(8, 3, 512, 512).clip(0, 1)
+    # im = torch.randn(8, 3, 512, 512)
     # out = model(im)
     # print(out["logits"].shape)
     # print(out["preds"].shape)

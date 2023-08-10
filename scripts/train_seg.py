@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader
 
 import wandb
 from configs.factory import Config, init_config
-from src.dataset import ContrailsDataset
+from src.dataset import ContrailsDataset, ContrailsDatasetV2
 from src.losses import get_loss
 from src.metrics import calc_metrics
 from src.models import ContrailsModel, UNETR_Segformer
@@ -71,8 +71,16 @@ def get_dfs(config: Config, fold: int) -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def get_loaders(
-    config: Config, remake_df: bool, debug: bool, fold: int, positive_only: bool = False
+    config: Config,
+    remake_df: bool,
+    debug: bool,
+    fold: int,
+    positive_only: bool = False,
 ) -> tuple[DataLoader, DataLoader]:
+    train_aug = A.Compose(config.train_aug_list)  # type: ignore
+    valid_aug = A.Compose(config.valid_aug_list)  # type: ignore
+    num_workers = mp.cpu_count() if not debug else 1
+
     if remake_df:
         train_df = make_df(
             config.data_root_path, config.data_root_path / "train", "train"
@@ -97,16 +105,78 @@ def get_loaders(
         logger.info(f"Use pseudo labeled data {len(paths) = }")
         train_image_paths += paths
 
-    num_workers = mp.cpu_count()
     if debug:
         train_image_paths = train_image_paths[:100]
         valid_image_paths = valid_image_paths[:100]
-        num_workers = 1
 
     logger.info(f"{len(train_image_paths) = }, {len(valid_image_paths) = }")
 
+    train_dataset = ContrailsDataset(
+        image_paths=train_image_paths,
+        image_size=config.image_size,
+        train=True,
+        transform_fn=train_aug,
+    )
+    valid_dataset = ContrailsDataset(
+        image_paths=valid_image_paths,
+        image_size=config.image_size,
+        train=True,
+        transform_fn=valid_aug,
+    )
+    train_loader = DataLoader(
+        dataset=train_dataset,
+        batch_size=config.train_batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=True,
+    )
+    valid_loader = DataLoader(
+        dataset=valid_dataset,
+        batch_size=config.valid_batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=True,
+        drop_last=False,
+    )
+    return train_loader, valid_loader
+
+
+def get_loaders_v2(
+    config: Config,
+    debug: bool,
+    fold: int,
+    positive_only: bool = False,
+) -> tuple[DataLoader, DataLoader]:
     train_aug = A.Compose(config.train_aug_list)  # type: ignore
     valid_aug = A.Compose(config.valid_aug_list)  # type: ignore
+    num_workers = mp.cpu_count() if not debug else 1
+
+    train_df = make_df(
+        data_root_path=config.data_root_path,
+        image_root_path=config.data_root_path / "train",
+        phase="train",
+    )
+    valid_df = make_df(
+        data_root_path=config.data_root_path,
+        image_root_path=config.data_root_path / "validation",
+        phase="validation",
+    )
+
+    train_image_paths = train_df["path"].to_numpy().tolist()
+    valid_image_paths = valid_df["path"].to_numpy().tolist()
+
+    if config.with_pseudo_label:
+        paths = list(Path(config.pseudo_label_dir).glob("*"))
+        logger.info(f"Use pseudo labeled data {len(paths) = }")
+        train_image_paths += paths
+
+    if debug:
+        train_image_paths = train_image_paths[:100]
+        valid_image_paths = valid_image_paths[:100]
+
+    logger.info(f"{len(train_image_paths) = }, {len(valid_image_paths) = }")
+
     train_dataset = ContrailsDataset(
         image_paths=train_image_paths,
         image_size=config.image_size,
@@ -185,13 +255,22 @@ def main(
         seed_everything(config.seed)
         logger.info(f"## Fold: {fold} ##")
 
-        train_loader, valid_loader = get_loaders(
-            config,
-            remake_df=remake_df,
-            debug=debug,
-            fold=fold,
-            positive_only=config.positive_only,
-        )
+        use_v2 = True
+        if use_v2:
+            train_loader, valid_loader = get_loaders_v2(
+                config,
+                debug=debug,
+                fold=fold,
+                positive_only=config.positive_only,
+            )
+        else:
+            train_loader, valid_loader = get_loaders(
+                config,
+                remake_df=remake_df,
+                debug=debug,
+                fold=fold,
+                positive_only=config.positive_only,
+            )
         logger.info(f"{config.arch =}")
         model: UNETR_Segformer | ContrailsModel
         if config.arch == "UNETR_Segformer":

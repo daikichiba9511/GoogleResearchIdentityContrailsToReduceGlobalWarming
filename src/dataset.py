@@ -55,6 +55,18 @@ def _load_image(path: str) -> tuple[np.ndarray, np.ndarray]:
     return raw_image, raw_label
 
 
+def make_soft_label(labels: np.ndarray) -> np.ndarray:
+    """make_soft_label
+
+    Args:
+        labels (np.ndarray): shape = (H, W, 1, R)
+
+    Returns:
+        np.ndarray: shape = (256, 256, 1)
+    """
+    return labels.mean(axis=-1, keepdims=True)
+
+
 class ContrailsDataset(Dataset):
     """ContrailsDataset
 
@@ -81,11 +93,13 @@ class ContrailsDataset(Dataset):
         normalize_fn: Callable | None = None,
         transform_fn: Callable | None = None,
         image_ids: Sequence[str] | None = None,
+        use_soft_label: bool = False,
     ) -> None:
         self.image_paths = image_paths
         self.image_ids = image_ids
         self.image_size = image_size
         self.is_train = train
+        self.use_soft_label = use_soft_label
 
         if normalize_fn is None:
             # self.normalize_image = T.Normalize(
@@ -172,6 +186,70 @@ class ContrailsDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.image_paths)
+
+
+class ContrailsDatasetV2(Dataset):
+    def __init__(
+        self,
+        img_paths: Sequence[Path],
+        transform_fn: Callable | None = None,
+        phase: str = "train",
+    ) -> None:
+        self.img_paths = img_paths
+        self.transform_fn = transform_fn
+        self.phase = phase
+
+    def __len__(self) -> int:
+        return len(self.img_paths)
+
+    def _transform(
+        self, image: np.ndarray, mask: np.ndarray | None = None
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if self.transform_fn is not None and mask is not None:
+            augmented = self.transform_fn(image=image, mask=mask)
+            _image = augmented["image"]
+            _target = augmented["mask"]
+        elif mask is not None:
+            _image = torch.tensor(image).float().permute(2, 0, 1)
+            _target = torch.tensor(mask).float()
+        else:
+            _image = torch.tensor(image).float().permute(2, 0, 1)
+            _target = None
+        return _image, _target
+
+    def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
+        img_path = self.img_paths[index]
+        record_data = read_record(img_path)
+        n_times_before = 4
+        false_color_img = get_false_color(record_data)
+        raw_image = false_color_img[..., n_times_before]
+        raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
+        pixel_mask = np.load(img_path / "human_pixel_mask.npy")
+
+        match self.phase:
+            case "train":
+                individual_mask = np.load(img_path / "human_individual_mask.npy")
+                avg_mask = make_soft_label(individual_mask)
+                image, target = self._transform(raw_image, avg_mask)
+                if target is None:
+                    raise ValueError("target must not be None")
+                return {
+                    "image": image,
+                    "pixel_mask": torch.tensor(pixel_mask),
+                    "target": target,
+                }
+            case "val":
+                image, target = self._transform(raw_image, pixel_mask)
+                if target is None:
+                    raise ValueError("target must not be None")
+                return {"image": image, "target": target}
+            case "test":
+                image, _ = self._transform(raw_image)
+                return {"image": image}
+            case _:
+                raise ValueError(
+                    f"phase must be one of train, val, test, but got {self.phase}"
+                )
 
 
 class ClsDataset(Dataset):

@@ -671,9 +671,11 @@ def train_one_epoch(
     for step, batch in pbar:
         model.train()
         # TODO: Dataset修正して書き直す
-        batch = {"image": batch[0], "target": batch[1]}
-        batch = augmentation_fn(aug_params=aug_params, epoch=epoch, batch=batch)
-        batch = send_tensor_to_device(batch, device=device)
+        if isinstance(batch, tuple):
+            batch = {"image": batch[0], "target": batch[1]}
+            batch = augmentation_fn(aug_params=aug_params, epoch=epoch, batch=batch)
+            batch = send_tensor_to_device(batch, device=device)
+
         batch_size = batch["target"].size(0)
 
         if (
