@@ -13,7 +13,7 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp034
+# exp035
 
 copy from exp030
 
@@ -42,7 +42,7 @@ config = {
     # "encoder_name": "mit_b5",
     # "encoder_name": "tu-convnext_small",
     # "encoder_name": "tu-convnextv2_huge", too big, hard to train
-    "encoder_name": "tu-convnext_small",
+    "encoder_name": "tu-maxvit_tiny_tf_512",
     "encoder_weight": "imagenet",
     # "encoder_weight": "advprop",
     "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
@@ -63,9 +63,9 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "use_soft_label": True,
+    "use_soft_label": False,
     "use_amp": True,
-    "train_batch_size": 8 * 4,
+    "train_batch_size": 8 * 1,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
@@ -75,7 +75,7 @@ config = {
     "train_params": {},
     "max_grad_norm": 10.0,
     "patience": 12,
-    "grad_accum_step_num": 64 // (8 * 4),
+    "grad_accum_step_num": 64 // (8 * 1),
     "loss_type": "soft_bce",
     # "loss_params": {"smooth_factor": 0.0, "pos_weight": torch.tensor(7.31)},
     "loss_params": {"smooth_factor": 0.0},
