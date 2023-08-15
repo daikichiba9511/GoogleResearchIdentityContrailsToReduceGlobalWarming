@@ -86,10 +86,10 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 3e-4,
+        # "lr": 3e-4,
         # "lr": 3e-5,
         # "lr": 5e-4,
-        # "lr": 1e-3,
+        "lr": 1e-3,
         "weight_decay": 0.0,
     },
     "scheduler_type": "cosineannealinglr",

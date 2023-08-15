@@ -147,21 +147,22 @@ def get_loaders_v2(
     debug: bool,
     fold: int,
     positive_only: bool = False,
+    use_soft_label: bool = False,
 ) -> tuple[DataLoader, DataLoader]:
     train_aug = A.Compose(config.train_aug_list)  # type: ignore
     valid_aug = A.Compose(config.valid_aug_list)  # type: ignore
     num_workers = mp.cpu_count() if not debug else 1
 
-    train_df = make_df(
-        data_root_path=config.data_root_path,
-        image_root_path=config.data_root_path / "train",
-        phase="train",
-    )
-    valid_df = make_df(
-        data_root_path=config.data_root_path,
-        image_root_path=config.data_root_path / "validation",
-        phase="validation",
-    )
+    def _make_df(data_dir: Path, debug: bool = False) -> pd.DataFrame:
+        data_dirs = list(data_dir.glob("*"))
+        if len(data_dirs) == 0:
+            raise FileNotFoundError(f"{data_dir} is empty")
+        if debug:
+            data_dirs = data_dirs[:100]
+        return pd.DataFrame({"path": data_dirs})
+
+    train_df = _make_df(config.data_root_path / "train", debug=debug)
+    valid_df = _make_df(config.data_root_path / "validation", debug=debug)
 
     train_image_paths = train_df["path"].to_numpy().tolist()
     valid_image_paths = valid_df["path"].to_numpy().tolist()
@@ -171,23 +172,19 @@ def get_loaders_v2(
         logger.info(f"Use pseudo labeled data {len(paths) = }")
         train_image_paths += paths
 
-    if debug:
-        train_image_paths = train_image_paths[:100]
-        valid_image_paths = valid_image_paths[:100]
-
     logger.info(f"{len(train_image_paths) = }, {len(valid_image_paths) = }")
 
-    train_dataset = ContrailsDataset(
-        image_paths=train_image_paths,
-        image_size=config.image_size,
-        train=True,
+    train_dataset = ContrailsDatasetV2(
+        img_paths=train_image_paths,
         transform_fn=train_aug,
+        phase="train",
+        use_soft_label=use_soft_label,
     )
-    valid_dataset = ContrailsDataset(
-        image_paths=valid_image_paths,
-        image_size=config.image_size,
-        train=True,
+    valid_dataset = ContrailsDatasetV2(
+        img_paths=valid_image_paths,
         transform_fn=valid_aug,
+        phase="val",
+        use_soft_label=use_soft_label,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -213,6 +210,7 @@ def main(
     all: bool = False,
     debug: bool = False,
     remake_df: bool = False,
+    disable_compile: bool = False,
 ) -> None:
     """
     Args:
@@ -222,7 +220,7 @@ def main(
         remake_df: If True, remake dataframe
     """
     config_path = f"configs.{exp_ver}"
-    config: Config = init_config(Config, config_path)
+    config: Config = init_config(Config, config_path, debug)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     uid = str(uuid.uuid4())[:8]
@@ -255,13 +253,14 @@ def main(
         seed_everything(config.seed)
         logger.info(f"## Fold: {fold} ##")
 
-        use_v2 = True
-        if use_v2:
+        # if config.use_soft_label:
+        if True:
             train_loader, valid_loader = get_loaders_v2(
                 config,
                 debug=debug,
                 fold=fold,
                 positive_only=config.positive_only,
+                use_soft_label=config.use_soft_label,
             )
         else:
             train_loader, valid_loader = get_loaders(
@@ -272,7 +271,7 @@ def main(
                 positive_only=config.positive_only,
             )
         logger.info(f"{config.arch =}")
-        model: UNETR_Segformer | ContrailsModel
+        model: torch.nn.Module
         if config.arch == "UNETR_Segformer":
             model = UNETR_Segformer(img_size=config.image_size)
         else:
@@ -282,6 +281,10 @@ def main(
                 aux_params=config.aux_params,
                 arch=config.arch,
             )
+
+        if not disable_compile:
+            model = torch.compile(model)  # type: ignore
+
         model = model.to(device=device)
         if config.resume_training:
             resume_path = config.resume_path.format(fold=fold)
@@ -412,5 +415,6 @@ if __name__ == "__main__":
     args.add_argument("--debug", default=False, action="store_true")
     args.add_argument("--all", default=False, action="store_true")
     args.add_argument("--remake_df", default=False, action="store_true")
+    args.add_argument("--disable_compile", default=False, action="store_true")
     # typer.run(main)
     main(**vars(args.parse_args()))

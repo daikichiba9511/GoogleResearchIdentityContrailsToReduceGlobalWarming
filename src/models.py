@@ -6,6 +6,7 @@ import timm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchvision as tv
 from monai.networks.nets.swin_unetr import SwinUNETR
 from monai.networks.nets.unetr import UNETR
 from transformers import (
@@ -60,27 +61,32 @@ class ContrailsModel(nn.Module):
         encoder_weight: str | None = None,
         aux_params: dict[str, Any] | None = None,
         arch: str = "Unet",
-        trainable_downsampling: bool = False,
+        trainable_downsampling: bool = True,
     ) -> None:
         super().__init__()
-        if encoder_name.startswith("tu-convnext") or encoder_name.startswith(
-            "tu-maxvit"
+        if (
+            encoder_name.startswith("tu-convnext")
+            # or encoder_name.startswith("tu-maxvit")
+            or encoder_name.startswith("tu-pvt")
         ):
             encoder_depth = 4
         else:
             encoder_depth = 5
 
         pop_last_block = False
-        if encoder_name.startswith("tu-convnext"):
+        if encoder_name.startswith("tu-convnext") or encoder_name.startswith("tu-pvt"):
             decoder_channels = [256, 128, 64, 32]
+            # decoder_channels = [128, 64, 32, 16]
+            # decoder_channels = [512, 256, 128, 64]
 
         elif encoder_name.startswith("tu-maxvit"):
             # NOTE:
             # docoderの最後のブロックをpopして64->32の変換からSegmentationHeadに渡してる
             # ので、Headは64で初期化するのに64 -> 64にする
             # SegmentationHeadはchannel方向の集約のみなのでOK
-            decoder_channels = [256, 128, 64, 64]
-            pop_last_block = True
+            # decoder_channels = [256, 128, 64, 64]
+            # pop_last_block = False
+            decoder_channels = [256, 128, 64, 32, 16]
         else:
             decoder_channels = [256, 128, 64, 32, 16]
 
@@ -131,7 +137,13 @@ class ContrailsModel(nn.Module):
             # padding=2で微妙に足りない分を補う
             self.downsample2x = nn.Conv2d(1, 1, kernel_size=5, stride=2, padding=2)
         else:
-            self.downsample2x = nn.AvgPool2d(kernel_size=2, stride=2)
+            # self.downsample2x = nn.AvgPool2d(kernel_size=2, stride=2)
+            self.downsample2x = tv.transforms.Resize(
+                size=(256, 256),
+                interpolation=tv.transforms.InterpolationMode.BILINEAR,
+                max_size=256,
+                antialias=True,  # type: ignore
+            )
 
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         outputs = self.model(images)
@@ -379,13 +391,13 @@ if __name__ == "__main__":
     out = model(im)
     print(out["logits"].shape)
     print(out["preds"].shape)
-
-    model = ContrailsModel(encoder_name="tu-convnext_small", arch="Unet")
-    # model = torch.compile(model)
-    im = torch.randn(8, 3, 512, 512)
-    out = model(im)
-    print(out["logits"].shape)
-    print(out["preds"].shape)
+    #
+    # model = ContrailsModel(encoder_name="tu-convnext_small", arch="Unet")
+    # # model = torch.compile(model)
+    # im = torch.randn(8, 3, 512, 512)
+    # out = model(im)
+    # print(out["logits"].shape)
+    # print(out["preds"].shape)
 
     # model = ContrailsModel(encoder_name="swin", arch="OneFormer")
     # # model = torch.compile(model)
@@ -393,3 +405,17 @@ if __name__ == "__main__":
     # out = model(im)
     # print(out["logits"].shape)
     # print(out["preds"].shape)
+
+    model = ContrailsModel(encoder_name="tu-pvt_v2_b1", arch="Unet")
+    # model = torch.compile(model)
+    im = torch.randn(8, 3, 512, 512)
+    out = model(im)
+    print(out["logits"].shape)
+    print(out["preds"].shape)
+
+    model = ContrailsModel(encoder_name="tu-tf_efficientnetv2_s", arch="Unet")
+    # model = torch.compile(model)
+    im = torch.randn(8, 3, 512, 512)
+    out = model(im)
+    print(out["logits"].shape)
+    print(out["preds"].shape)

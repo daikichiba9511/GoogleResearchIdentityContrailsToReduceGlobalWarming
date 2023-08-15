@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from functools import lru_cache
 from pathlib import Path
-from typing import Sequence
+from typing import Sequence, TypeVar
 
 import albumentations as A
 import numpy as np
@@ -27,6 +27,13 @@ def normalize_range(
     data: np.ndarray, bounds: tuple[float | int, float | int]
 ) -> np.ndarray:
     return (data - bounds[0]) / (bounds[1] - bounds[0])
+
+
+_T = TypeVar("_T", np.ndarray, torch.Tensor)
+
+
+def rescale_range(img: _T, min_value: float, max_value: float) -> _T:
+    return img - min_value / (max_value - min_value)
 
 
 def get_false_color(record_data: dict[str, np.ndarray]) -> np.ndarray:
@@ -55,16 +62,21 @@ def _load_image(path: str) -> tuple[np.ndarray, np.ndarray]:
     return raw_image, raw_label
 
 
-def make_soft_label(labels: np.ndarray) -> np.ndarray:
+def soft_label(labels: np.ndarray) -> np.ndarray:
     """make_soft_label
 
     Args:
         labels (np.ndarray): shape = (H, W, 1, R)
 
     Returns:
-        np.ndarray: shape = (256, 256, 1)
+        np.ndarray: shape = (H, W)
+
+    References:
+    https://github.com/tattaka/google-research-identify-contrails-reduce-global-warming/blob/main/src/exp055/train_stage1_seg.py#L112
     """
-    return labels.mean(axis=-1, keepdims=True)
+    h, w, _, r = labels.shape
+    soft_labels = np.clip((2 * labels).sum(axis=-1) / r, 0, 1)
+    return soft_labels.reshape(h, w)
 
 
 class ContrailsDataset(Dataset):
@@ -194,10 +206,12 @@ class ContrailsDatasetV2(Dataset):
         img_paths: Sequence[Path],
         transform_fn: Callable | None = None,
         phase: str = "train",
+        use_soft_label: bool = True,
     ) -> None:
         self.img_paths = img_paths
         self.transform_fn = transform_fn
         self.phase = phase
+        self.use_soft_label = use_soft_label
 
     def __len__(self) -> int:
         return len(self.img_paths)
@@ -205,6 +219,11 @@ class ContrailsDatasetV2(Dataset):
     def _transform(
         self, image: np.ndarray, mask: np.ndarray | None = None
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if image.ndim != 3:
+            raise ValueError(f"image must be 3 dimension, but got {image.ndim}")
+        if mask is not None and mask.ndim != 2:
+            raise ValueError(f"mask must be 2 dimension, but got {mask.ndim}")
+
         if self.transform_fn is not None and mask is not None:
             augmented = self.transform_fn(image=image, mask=mask)
             _image = augmented["image"]
@@ -221,31 +240,47 @@ class ContrailsDatasetV2(Dataset):
         img_path = self.img_paths[index]
         record_data = read_record(img_path)
         n_times_before = 4
-        false_color_img = get_false_color(record_data)
-        raw_image = false_color_img[..., n_times_before]
-        raw_image = np.reshape(raw_image, (256, 256, 3)).astype(np.float32)
-        pixel_mask = np.load(img_path / "human_pixel_mask.npy")
+        raw_image = (
+            get_false_color(record_data)[..., n_times_before]
+            .reshape(256, 256, 3)
+            .astype(np.float32)
+        )
+        pixel_mask = (
+            np.load(img_path / "human_pixel_masks.npy")
+            .reshape(256, 256)
+            .astype(np.float32)
+        )
 
         match self.phase:
             case "train":
-                individual_mask = np.load(img_path / "human_individual_mask.npy")
-                avg_mask = make_soft_label(individual_mask)
-                image, target = self._transform(raw_image, avg_mask)
+                individual_mask = np.load(
+                    img_path / "human_individual_masks.npy"
+                ).astype(np.float32)
+                if self.use_soft_label:
+                    mask = soft_label(individual_mask).astype(np.float32)
+                else:
+                    mask = pixel_mask
+
+                image, target = self._transform(raw_image, mask)
                 if target is None:
                     raise ValueError("target must not be None")
+
                 return {
                     "image": image,
                     "pixel_mask": torch.tensor(pixel_mask),
                     "target": target,
                 }
+
             case "val":
                 image, target = self._transform(raw_image, pixel_mask)
                 if target is None:
                     raise ValueError("target must not be None")
                 return {"image": image, "target": target}
+
             case "test":
                 image, _ = self._transform(raw_image)
                 return {"image": image}
+
             case _:
                 raise ValueError(
                     f"phase must be one of train, val, test, but got {self.phase}"

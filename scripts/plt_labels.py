@@ -6,18 +6,11 @@ from typing import Callable, Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import typer
 from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 
-from src.dataset import get_false_color, read_record
-from src.utils import (
-    filter_tiny_objects,
-    get_called_time,
-    get_stream_logger,
-    plot_a_label_on_a_image,
-    plot_images_with_labels,
-)
+from src.dataset import get_false_color, read_record, soft_label
+from src.utils import get_called_time, get_stream_logger, plot_a_label_on_a_image
 
 logger = get_stream_logger(20)
 
@@ -65,7 +58,7 @@ def main() -> None:
     data_root_path = Path(
         "./input/google-research-identify-contrails-reduce-global-warming"
     )
-    debug = True
+    debug = False
 
     output_dir.mkdir(exist_ok=True, parents=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -108,7 +101,7 @@ def main() -> None:
         # - 3. その結果としてのラベル同士の比較
         fig, ax = plt.subplots(1, 1, figsize=(10, 10))
         assert isinstance(fig, plt.Figure) and isinstance(ax, plt.Axes)
-        avg_mask = np.mean(individual_mask, axis=-1)
+        avg_mask = soft_label(individual_mask)
         ax.imshow(avg_mask, alpha=0.5)
         ax.imshow(pixel_mask, alpha=0.5)
         fig.savefig(output_dir / f"{img_id}_pixel_mask_and_avg_mask_comparison.png")

@@ -85,13 +85,14 @@ class Config:
     aug_params: AugParamsDict
 
     use_amp: bool
+    use_soft_label: bool
 
     # -- Inference
     test_batch_size: int
     threshold: float
 
 
-def init_config(config_cls: type[T], config_path: str) -> T:
+def init_config(config_cls: type[T], config_path: str, debug: bool = False) -> T:
     """Load config from config_path and initialize config_cls
 
     Args:
@@ -99,6 +100,8 @@ def init_config(config_cls: type[T], config_path: str) -> T:
         config_path (str): Config path
     """
     _config = importlib.import_module(config_path).config
+    if debug:
+        _config["epochs"] = 1
     logger.info(f"Loaded config from {config_path}")
     # logger.info(f"\n\tConfig: \n{pformat(_config)}")
     return config_cls(**_config)

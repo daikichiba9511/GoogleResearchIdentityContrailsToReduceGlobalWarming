@@ -63,7 +63,7 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "use_soft_label": True,
+    "use_soft_label": False,
     "use_amp": True,
     "train_batch_size": 8 * 4,
     "valid_batch_size": 32,

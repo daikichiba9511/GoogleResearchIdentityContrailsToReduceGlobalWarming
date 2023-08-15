@@ -63,7 +63,7 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "use_soft_label": True,
+    "use_soft_label": False,
     "use_amp": True,
     "train_batch_size": 8 * 4,
     "valid_batch_size": 32,
@@ -86,10 +86,10 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 3e-4,
+        # "lr": 3e-4,
         # "lr": 3e-5,
         # "lr": 5e-4,
-        # "lr": 1e-3,
+        "lr": 1e-3,
         "weight_decay": 0.0,
     },
     "scheduler_type": "cosineannealinglr",

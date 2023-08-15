@@ -71,7 +71,7 @@ config = {
     "resume_training": False,
     "resume_path": "",
     "positive_only": False,
-    "epochs": 30,
+    "epochs": 40,
     "train_params": {},
     "max_grad_norm": 10.0,
     "patience": 12,
@@ -86,22 +86,22 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 3e-4,
+        "lr": 5e-4,
         # "lr": 3e-5,
         # "lr": 5e-4,
         # "lr": 1e-3,
-        "weight_decay": 0.0,
+        "weight_decay": 1e-2,
     },
-    "scheduler_type": "cosineannealinglr",
-    "scheduler_params": {
-        "T_max": 30,  # iterationの最大(周期の長さ)
-        "eta_min": 1e-6,  # lr最小値
-        "last_epoch": -1,
-    },
-    # "scheduler_type": "cosine_with_warmup",
+    # "scheduler_type": "cosineannealinglr",
     # "scheduler_params": {
-    #     "warmup_ratio": 0.02,
+    #     "T_max": 30,  # iterationの最大(周期の長さ)
+    #     "eta_min": 1e-6,  # lr最小値
+    #     "last_epoch": -1,
     # },
+    "scheduler_type": "cosine_with_warmup",
+    "scheduler_params": {
+        "warmup_ratio": 0.1,
+    },
     "train_aug_list": [
         # A.RandomResizedCrop(height=IMG_SIZE, width=IMG_SIZE, scale=(0.8, 1.2), p=1.0),
         # A.CropNonEmptyMaskIfExists(height=512, width=512, p=1.0),

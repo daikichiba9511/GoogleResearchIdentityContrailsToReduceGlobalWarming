@@ -481,7 +481,9 @@ def default_segmentation_forward_fn(
 _T = TypeVar("_T", bound=BatchAnnotation)
 
 
-def default_augmentation_fn(aug_params: AugParams | None, epoch: int, batch: _T) -> _T:
+def default_augmentation_fn(
+    aug_params: AugParams | None, epoch: int, batch: BatchAnnotation
+) -> BatchAnnotation:
     images = batch["image"]
     target = batch["target"]
     if not (isinstance(images, torch.Tensor) and isinstance(target, torch.Tensor)):
@@ -533,16 +535,6 @@ def default_postprocess_fn(
     # y_preds: (N, H, W), target: (N, H, W)
     y_preds = torch.sigmoid(preds).to("cpu").detach()
     target = targets.to("cpu").detach()
-
-    if y_preds.shape[1:] == (256, 256):
-        y_preds = F.interpolate(
-            y_preds.unsqueeze(1).float(), size=256, mode="bilinear"
-        ).squeeze(1)
-
-    if target.shape[1:] == (256, 256):
-        target = F.interpolate(
-            target.unsqueeze(1).float(), size=256, mode="bilinear"
-        ).squeeze(1)
 
     y_preds = y_preds.numpy()
     target = target.numpy()
@@ -673,9 +665,9 @@ def train_one_epoch(
         # TODO: Dataset修正して書き直す
         if isinstance(batch, tuple):
             batch = {"image": batch[0], "target": batch[1]}
-            batch = augmentation_fn(aug_params=aug_params, epoch=epoch, batch=batch)
-            batch = send_tensor_to_device(batch, device=device)
 
+        batch = augmentation_fn(aug_params=aug_params, epoch=epoch, batch=batch)
+        batch = send_tensor_to_device(batch, device=device)
         batch_size = batch["target"].size(0)
 
         if (
@@ -848,10 +840,11 @@ def valid_one_epoch(
         desc="Valid Per Epoch",
     )
     for step, batch in pbar:
-        batch_size = batch[1].size(0)
-        batch = send_tensor_to_device(
-            batch={"image": batch[0], "target": batch[1]}, device=device
-        )
+        if isinstance(batch, tuple):
+            batch = {"image": batch[0], "target": batch[1]}
+
+        batch_size = batch["target"].size(0)
+        batch = send_tensor_to_device(batch=batch, device=device)
 
         with (
             torch.inference_mode(),
