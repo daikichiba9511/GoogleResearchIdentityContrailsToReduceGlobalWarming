@@ -1,5 +1,6 @@
+import itertools
 from logging import getLogger
-from typing import Any
+from typing import Any, Sequence, TypeVar
 
 import segmentation_models_pytorch as smp
 import timm
@@ -9,6 +10,8 @@ import torch.nn.functional as F
 import torchvision as tv
 from monai.networks.nets.swin_unetr import SwinUNETR
 from monai.networks.nets.unetr import UNETR
+from segmentation_models_pytorch.base import initialization as smp_init
+from segmentation_models_pytorch.base import modules as md
 from transformers import (
     OneFormerModel,
     OneFormerProcessor,
@@ -52,6 +55,219 @@ class OneFormerForwarder(nn.Module):
             return output.transformer_decoder_mask_predictions
 
         raise NotImplementedError
+
+
+_T = TypeVar("_T", bound=torch.Tensor)
+
+
+class TTA:
+    _config = {"d8prob": (8, True)}
+
+    def __init__(self, tta_type: str) -> None:
+        self.n_times, self.prob = self._config[tta_type]
+
+    @staticmethod
+    def _tta_stack(x: torch.Tensor, n_times: int) -> torch.Tensor:
+        """Increse input x by n_times TTA patterns
+        batch_size = n * n_times
+        """
+
+        def _augmentated(k: int) -> torch.Tensor | tuple[torch.Tensor, torch.Tensor]:
+            if n_times == 8:
+                rotated = torch.rot90(x, k=k, dims=(2, 3))
+                flipped = torch.flip(rotated, dims=(3,))
+                return rotated, flipped
+            return torch.rot90(x, k=k, dims=(2, 3))
+
+        augmented_x = list(map(_augmentated, range(4)))
+        flattend_x = list(itertools.chain(*augmented_x))
+        flattend_x = torch.cat(flattend_x, dim=0)
+        return flattend_x
+
+    @staticmethod
+    def _tta_average(preds: torch.Tensor, n_times: int, prob: bool) -> torch.Tensor:
+        batch_size, channels, height, width = preds.shape
+        y_preds = preds.view(n_times, batch_size // n_times, channels, height, width)
+        _batch_size = batch_size // n_times
+        y_avg = torch.zeros(
+            (_batch_size, 1, height, width), dtype=torch.float32, device=preds.device
+        )
+        if prob:
+            y_preds = torch.sigmoid(y_preds)
+
+        if n_times == 4:
+            for k in range(4):
+                y_avg += (1 / n_times) * torch.rot90(y_preds[k], k=-k, dims=(2, 3))
+
+        if n_times == 8:
+            for k in range(4):
+                y_avg += (1 / n_times) * torch.rot90(y_preds[2 * k], k=-k, dims=(2, 3))
+                flipped = torch.flip(y_preds[2 * k + 1], dims=(3,))
+                y_avg += (1 / n_times) * torch.rot90(flipped, k=-k, dims=(2, 3))
+
+        if prob:
+            return y_avg.clamp(min=1e-6, max=1 - 1e-6).logit()
+        return y_avg
+
+    def average(self, y: torch.Tensor) -> torch.Tensor:
+        """Average TTA predictions"""
+        if self.n_times == 1:
+            return y
+        return self._tta_average(y, self.n_times, self.prob)
+
+    def stack(self, y: torch.Tensor) -> torch.Tensor:
+        """Stack TTA predictions"""
+        if self.n_times == 1:
+            return y
+        return self._tta_stack(y, self.n_times)
+
+
+class DecoderBlock(nn.Module):
+    """U-Net decoder from Segmentation Models PyTorch
+
+    Ref:
+    - https://github.com/qubvel/segmentation_models.pytorch
+    """
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        skip_channels: int,
+        use_batchnorm: bool = True,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+
+        conv_in_channels = in_channels + skip_channels
+        self.conv1 = md.Conv2dReLU(
+            in_channels=conv_in_channels,
+            out_channels=out_channels,
+            kernel_size=3,
+            padding=1,
+            use_batchnorm=use_batchnorm,
+        )
+        self.conv2 = md.Conv2dReLU(
+            in_channels=out_channels,
+            out_channels=out_channels,
+            kernel_size=3,
+            padding=1,
+            use_batchnorm=use_batchnorm,
+        )
+        self.dropout_skip = nn.Dropout(p=dropout)
+
+    def forward(
+        self, x: torch.Tensor, skip: torch.Tensor | None = None
+    ) -> torch.Tensor:
+        x = F.interpolate(x, scale_factor=2, mode="nearest")
+        if skip is not None:
+            skipped = self.dropout_skip(skip)
+            x = torch.cat([x, skipped], dim=1)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        return x
+
+
+class UnetDecoder(nn.Module):
+    def __init__(
+        self,
+        encoder_channels: list[int],
+        decoder_channels: list[int],
+        use_batchnorm: bool = True,
+        dropout: float = 0.0,
+    ) -> None:
+        super().__init__()
+        encoder_channels = encoder_channels[::-1]
+        # -- computing blocks input and output channels
+        head_channels = encoder_channels[0]
+        in_channels = [head_channels] + list(decoder_channels[:-1])
+        skip_channels = list(encoder_channels[1:]) + [0]
+        out_channels = decoder_channels
+        self.center = nn.Identity()
+
+        # -- Combine decoder keyword arguments
+        def _decorder_block(
+            channels: tuple[int, int, int],
+        ) -> DecoderBlock:
+            in_ch, skip_ch, out_ch = channels
+            return DecoderBlock(
+                in_channels=in_ch,
+                out_channels=out_ch,
+                skip_channels=skip_ch,
+                use_batchnorm=use_batchnorm,
+                dropout=dropout,
+            )
+
+        self.blocks = nn.ModuleList(
+            map(_decorder_block, zip(in_channels, skip_channels, out_channels))
+        )
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        features = features[::-1]  # reverse channels to start from head of encoder
+        head = features[0]
+        skips = features[1:]
+        x = self.center(head)
+        # TODO: ここもっとわかりやすく書けるはず
+        for i, decoder_block in enumerate(self.blocks):
+            skip = skips[i] if i < len(skips) else None
+            x = decoder_block(x, skip)
+        return x
+
+
+def _check_reduction(reduction_factors: Sequence[int]) -> None:
+    r_prev = 1
+    for r in reduction_factors:
+        if r / r_prev != 2:
+            raise ValueError(
+                "Reduction factor of each block should be divisible by the previous one"
+            )
+        r_prev = r
+
+
+class CustomedUnet(nn.Module):
+    def __init__(
+        self,
+        name: str,
+        pretrained: bool = True,
+        decoder_channels: list[int] = [256, 128, 64, 32, 16],
+        dropout: float = 0.0,
+        tta_type: str | None = None,
+    ) -> None:
+        super().__init__()
+        self.encoder = timm.create_model(
+            name, features_only=True, pretrained=pretrained
+        )
+        encoder_channels = self.encoder.feature_info.channels()
+        _check_reduction(self.encoder.feature_info.reduction())
+        if len(encoder_channels) != len(decoder_channels):
+            raise ValueError(
+                "Encoder channels and decoder channels should have the same length"
+            )
+        self.decoder = UnetDecoder(encoder_channels, decoder_channels, dropout=dropout)
+        self.segmentation_head = smp.base.SegmentationHead(
+            decoder_channels[-1], out_channels=1, activation=None, kernel_size=1
+        )
+        smp_init.initialize_decoder(self.decoder)
+        self.asym_conv = nn.Sequential(
+            nn.Conv2d(1, 25, kernel_size=5, stride=2, padding=2),  # downsample 2x
+            nn.ReLU(inplace=True),
+            nn.Conv2d(25, 1, kernel_size=1),
+        )
+        self.tta = TTA(tta_type) if tta_type is not None else None
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
+        if self.tta is not None:
+            x = self.tta.stack(x)
+
+        features = self.encoder(x)
+        decoder_output = self.decoder(features)
+        logits = self.segmentation_head(decoder_output)
+
+        if self.tta is not None:
+            logits = self.tta.average(logits)
+
+        preds = self.asym_conv(logits)
+        return {"logits": logits, "preds": preds, "cls_logits": None}
 
 
 class ContrailsModel(nn.Module):
@@ -135,7 +351,16 @@ class ContrailsModel(nn.Module):
             # IN : torch.nn.Conv2d(1,1,kernel_size=(5,5),stride=2,padding=2)(torch.randn(3,1,512,512)).shape
             # OUT: torch.Size([3, 1, 256, 256])
             # padding=2で微妙に足りない分を補う
-            self.downsample2x = nn.Conv2d(1, 1, kernel_size=5, stride=2, padding=2)
+            thin_downsampling = False
+            if thin_downsampling:
+                self.downsample2x = nn.Conv2d(1, 1, kernel_size=5, stride=2, padding=2)
+            else:
+                hidden_size = 25
+                self.downsample2x = nn.Sequential(
+                    nn.Conv2d(1, hidden_size, kernel_size=5, stride=2, padding=2),
+                    nn.ReLU(inplace=True),
+                    nn.Conv2d(hidden_size, 1, kernel_size=1),
+                )
         else:
             # self.downsample2x = nn.AvgPool2d(kernel_size=2, stride=2)
             self.downsample2x = tv.transforms.Resize(
@@ -415,6 +640,12 @@ if __name__ == "__main__":
 
     model = ContrailsModel(encoder_name="tu-tf_efficientnetv2_s", arch="Unet")
     # model = torch.compile(model)
+    im = torch.randn(8, 3, 512, 512)
+    out = model(im)
+    print(out["logits"].shape)
+    print(out["preds"].shape)
+
+    model = CustomedUnet(name="maxvit_small_tf_512", pretrained=True)
     im = torch.randn(8, 3, 512, 512)
     out = model(im)
     print(out["logits"].shape)

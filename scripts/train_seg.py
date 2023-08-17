@@ -18,7 +18,7 @@ from configs.factory import Config, init_config
 from src.dataset import ContrailsDataset, ContrailsDatasetV2
 from src.losses import get_loss
 from src.metrics import calc_metrics
-from src.models import ContrailsModel, UNETR_Segformer
+from src.models import ContrailsModel, CustomedUnet, UNETR_Segformer
 from src.optimizer import get_optimizer
 from src.scheduler import SchedulerType, get_scheduler
 from src.train_tools import (
@@ -274,6 +274,12 @@ def main(
         model: torch.nn.Module
         if config.arch == "UNETR_Segformer":
             model = UNETR_Segformer(img_size=config.image_size)
+        elif config.arch == "CustomedUnet":
+            model = CustomedUnet(
+                name=config.encoder_name,
+                pretrained=config.encoder_weight is not None,
+                tta_type=None,
+            )
         else:
             model = ContrailsModel(
                 encoder_name=config.encoder_name,

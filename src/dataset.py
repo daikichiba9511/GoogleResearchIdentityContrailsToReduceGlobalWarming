@@ -62,7 +62,26 @@ def _load_image(path: str) -> tuple[np.ndarray, np.ndarray]:
     return raw_image, raw_label
 
 
-def soft_label(labels: np.ndarray) -> np.ndarray:
+def grid_img(pts_per_grid: int, offset: float = 0.5) -> torch.Tensor:
+    """create xy values of grid_num x grid_num grid
+
+    Args:
+        pts_per_grid (int): number of grid points per dimension (e.g 512)
+        offset (float, optional): offset of grid. Defaults to 0.5.
+
+    Returns:
+        torch.Tensor: shape = (pts_per_grid, pts_per_grid, 2)
+    """
+    grid = np.zeros((pts_per_grid, pts_per_grid, 2), dtype=np.float32)
+    for ix in range(pts_per_grid):
+        for iy in range(pts_per_grid):
+            grid[ix, iy, 1] = -1 + 2 * (ix + 0.5) / pts_per_grid + offset / 128
+            grid[ix, iy, 0] = -1 + 2 * (iy + 0.5) / pts_per_grid + offset / 128
+    grid = torch.from_numpy(grid)
+    return grid
+
+
+def soft_label(labels: np.ndarray, weight: int = 1) -> np.ndarray:
     """make_soft_label
 
     Args:
@@ -75,7 +94,7 @@ def soft_label(labels: np.ndarray) -> np.ndarray:
     https://github.com/tattaka/google-research-identify-contrails-reduce-global-warming/blob/main/src/exp055/train_stage1_seg.py#L112
     """
     h, w, _, r = labels.shape
-    soft_labels = np.clip((2 * labels).sum(axis=-1) / r, 0, 1)
+    soft_labels = np.clip((weight * labels).sum(axis=-1) / r, 0, 1)
     return soft_labels.reshape(h, w)
 
 
@@ -212,6 +231,7 @@ class ContrailsDatasetV2(Dataset):
         self.transform_fn = transform_fn
         self.phase = phase
         self.use_soft_label = use_soft_label
+        self.grid = grid_img(512, offset=0.5)
 
     def __len__(self) -> int:
         return len(self.img_paths)
@@ -226,15 +246,15 @@ class ContrailsDatasetV2(Dataset):
 
         if self.transform_fn is not None and mask is not None:
             augmented = self.transform_fn(image=image, mask=mask)
-            _image = augmented["image"]
-            _target = augmented["mask"]
-        elif mask is not None:
+            return augmented["image"], augmented["mask"]
+
+        elif self.transform_fn is None and mask is not None:
             _image = torch.tensor(image).float().permute(2, 0, 1)
             _target = torch.tensor(mask).float()
+            return _image, _target
         else:
             _image = torch.tensor(image).float().permute(2, 0, 1)
-            _target = None
-        return _image, _target
+            return _image, None
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         img_path = self.img_paths[index]

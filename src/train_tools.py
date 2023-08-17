@@ -654,6 +654,8 @@ def train_one_epoch(
     if aux_params is not None and "aux_loss" not in metric_names:
         metric_names.append("aux_loss")
     average_meters = init_average_meters(metric_names=metric_names)
+    model.train()
+
     pbar = tqdm(
         enumerate(train_loader),
         total=len(train_loader),
@@ -661,7 +663,6 @@ def train_one_epoch(
         desc="Train Per Epoch",
     )
     for step, batch in pbar:
-        model.train()
         # TODO: Dataset修正して書き直す
         if isinstance(batch, tuple):
             batch = {"image": batch[0], "target": batch[1]}
