@@ -13,13 +13,13 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp035
+# exp036
 
 copy from exp030
 
 ## Purpose
 
-- encoder: tf_efficientnetv2_s
+- encoder: tu-tf_efficientnetv2_s
 - img_size={IMG_SIZE}
 - with_pseudo_label
 - soft_bce

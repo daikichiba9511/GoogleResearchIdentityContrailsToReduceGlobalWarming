@@ -13,9 +13,9 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp035
+# exp037
 
-copy from exp030
+copy from exp035_4
 
 ## Purpose
 
@@ -26,6 +26,11 @@ copy from exp030
 - try to use soft label
 - lr=1e-4
 
+warmup_ratio=0.1 -> 0.43
+warmup_ratio=0.02 -> 0.0
+warmup_ratio=0.1,lr=1e-4 -> 0.0
+warmup_ratio=0.1,lr=1e-4,headのkernel_size=1バグの修正 -> 0.0
+
 """
 
 config = {
@@ -33,7 +38,7 @@ config = {
     "description": DESC,
     "seed": 42,
     # -- Model
-    "arch": "UNet",
+    "arch": "CustomedUnet",
     # ref: https://smp.readthedocs.io/en/latest/encoders.html
     # "encoder_name": "timm-resnest26d",  # 16M
     # "encoder_name": "timm-resnest50d",  # 25M
@@ -43,7 +48,8 @@ config = {
     # "encoder_name": "mit_b5",
     # "encoder_name": "tu-convnext_small",
     # "encoder_name": "tu-convnextv2_huge", too big, hard to train
-    "encoder_name": "tu-maxvit_tiny_tf_512",
+    # "encoder_name": "tu-convnext_small",
+    "encoder_name": "maxvit_tiny_tf_512",
     "encoder_weight": "imagenet",
     # "encoder_weight": "advprop",
     "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
@@ -64,9 +70,9 @@ config = {
     "image_size": IMG_SIZE,
     "n_splits": 5,
     # -- Training
-    "use_soft_label": False,
+    "use_soft_label": True,
     "use_amp": True,
-    "train_batch_size": 8 * 1,
+    "train_batch_size": 8,
     "valid_batch_size": 32,
     "output_dir": Path(f"./output/{expname}"),
     "resume_training": False,
@@ -74,7 +80,8 @@ config = {
     "positive_only": False,
     "epochs": 40,
     "train_params": {},
-    "max_grad_norm": 10.0,
+    # "max_grad_norm": 10.0, # ずっと0.0
+    "max_grad_norm": 1.0,
     "patience": 12,
     "grad_accum_step_num": 64 // (8 * 1),
     "loss_type": "soft_bce",
@@ -87,11 +94,11 @@ config = {
     # "aux_params": {"dropout": 0.5, "classes": 1},
     "optimizer_type": "adamw",
     "optimizer_params": {
-        # "lr": 5e-4,
         # "lr": 3e-5,
         # "lr": 5e-4,
         "lr": 1e-4,
         "weight_decay": 1e-2,
+        "eps": 1e-4,
     },
     # "scheduler_type": "cosineannealinglr",
     # "scheduler_params": {
@@ -101,6 +108,7 @@ config = {
     # },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
+        # "warmup_ratio": 0.02,
         "warmup_ratio": 0.1,
     },
     "train_aug_list": [
