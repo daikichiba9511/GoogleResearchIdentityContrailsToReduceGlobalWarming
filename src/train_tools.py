@@ -919,14 +919,11 @@ def valid_one_epoch(
             and output.cls_preds is not None
             and cls_loss_fn is not None
         ):
-            cls_preds = output.cls_preds
-            cls_target = _make_cls_label(output.targets)
-            cls_target = cls_target.to(device, non_blocking=True)
-            cls_loss = cls_loss_fn(cls_preds, cls_target)
-            cls_loss = aux_params.cls_weight * cls_loss
+            cls_target = _make_cls_label(output.targets).to(device, non_blocking=True)
+            cls_loss = aux_params.cls_weight * cls_loss_fn(output.cls_preds, cls_target)
             loss += cls_loss
-            cls_bce = F.binary_cross_entropy_with_logits(cls_preds, cls_target)
-            cls_accs = ((cls_preds > 0.5) == cls_target).sum() / batch_size
+            cls_bce = F.binary_cross_entropy_with_logits(output.cls_preds, cls_target)
+            cls_accs = ((output.cls_preds > 0.5) == cls_target).sum() / batch_size
             wandb.log(
                 {
                     f"valid/fold{fold}_cls_loss": cls_loss.item(),
@@ -944,11 +941,10 @@ def valid_one_epoch(
         positive_preds += preds.sum()
         positive_targets += targets.sum()
 
-        valid_metrics.update({"loss": loss.item()})
-
-        # Aggregate metrics
+        # --- Logging loss
         if not my_utils.is_nan(loss.item()):
             average_meters["loss"].update(value=loss.item(), n=batch_size)
+            valid_metrics.update({"loss": loss.item()})
 
         # Logging metrics
         for name, metric_value in valid_metrics.items():

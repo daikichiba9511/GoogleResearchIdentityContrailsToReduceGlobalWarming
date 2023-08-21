@@ -155,7 +155,7 @@ config = {
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
-        "warmup_ratio": 0.05,
+        "warmup_ratio": 0.025,
     },
     "train_aug_list": [
         A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
