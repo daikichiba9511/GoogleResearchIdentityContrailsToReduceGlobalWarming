@@ -33,7 +33,7 @@ config = {
     "description": DESC,
     "seed": 42,
     # -- Model
-    "arch": "UNet",
+    "arch": "Unet",
     # ref: https://smp.readthedocs.io/en/latest/encoders.html
     # "encoder_name": "timm-resnest26d",  # 16M
     # "encoder_name": "timm-resnest50d",  # 25M

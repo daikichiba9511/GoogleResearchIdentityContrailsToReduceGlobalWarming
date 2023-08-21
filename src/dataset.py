@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Sequence, TypeVar
 
 import albumentations as A
+import cv2
 import numpy as np
 import pandas as pd
 import torch
@@ -141,7 +142,7 @@ class ContrailsDataset(Dataset):
             self.normalize_image = normalize_fn
 
         if image_size != 256:
-            self.resize_image = T.transforms.Resize(256, antialias=True)
+            self.resize_image = T.transforms.Resize(256, antialias=True)  # type: ignore
         else:
             self.resize_image = None
 
@@ -219,6 +220,57 @@ class ContrailsDataset(Dataset):
         return len(self.image_paths)
 
 
+def fixed_offset_img(
+    img: np.ndarray, img_size: tuple[int, int] = (512, 512)
+) -> np.ndarray:
+    """fix offset of an image which is caused by polygon2mask
+
+    NOTE:
+        - Affine transformation
+
+        [x, y, 1] = [[a, b, t_x], [c, d, t_y], [0, 0, 0]] @ [x', y', 1]
+
+        where.
+
+        (tx, ty) is for translation.
+
+        (a, b, c, d) is for rotation and scaling.
+
+        If you want to know about affine transformation, please refer [1] and [2].
+        (specifically, [2] is very easy to understand the theory of affine transformation)
+
+    References:
+    [1] https://www.kaggle.com/competitions/google-research-identify-contrails-reduce-global-warming/discussion/430479
+    [2] https://note.nkmk.me/python-opencv-warp-affine-perspective/
+    [3] https://www.kaggle.com/competitions/google-research-identify-contrails-reduce-global-warming/discussion/430749
+    """
+    # If you want to upsample 2x in x direction, 1.5x in y direction, you should use M = [[2.0, 0.0, 0.0], [0.0, 1.5, 0.0]]
+    # If you want to move 25px in x direction, 50px in y direction, you should use M = [[1.0, 0.0, 25], [0.0, 1.0, 50]]
+    # When image size is 512x512, you should translate 1.5px in both x and y directions.
+    # So, you should use M = [[2.0, 0.0, 1.5], [0.0, 2.0, 1.5]]
+    #
+    # Make the image size (256, 256), 0.5px offset in both x and y directions occurs because of the translation of the polygon2mask using opencv(probably?)
+    # So, there are two possibilities. -0.5px offset or 0.5px offset. Since there is the offset, left-top or right-bottom was not included.
+    # If you want to know the offset, please refer [1] and [3]
+
+    img_affine_matrix = np.array(
+        [
+            [2.0, 0.0, 1.5],
+            [0.0, 2.0, 1.5],
+        ],
+        dtype=np.float64,
+    )
+    fixed_img = cv2.warpAffine(
+        img,
+        img_affine_matrix,
+        img_size,
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=0.0,
+    )
+    return fixed_img
+
+
 class ContrailsDatasetV2(Dataset):
     def __init__(
         self,
@@ -226,11 +278,18 @@ class ContrailsDatasetV2(Dataset):
         transform_fn: Callable | None = None,
         phase: str = "train",
         use_soft_label: bool = True,
+        mask_paths: Sequence[Path] | None = None,
+        avg_mask_paths: Sequence[Path] | None = None,
     ) -> None:
+        if phase not in ["train", "val", "test"]:
+            raise ValueError(f"phase must be one of train, val, test, but got {phase}")
+
         self.img_paths = img_paths
         self.transform_fn = transform_fn
         self.phase = phase
         self.use_soft_label = use_soft_label
+        self.mask_paths = mask_paths
+        self.avg_mask_paths = avg_mask_paths
         self.grid = grid_img(512, offset=0.5)
 
     def __len__(self) -> int:
@@ -247,6 +306,7 @@ class ContrailsDatasetV2(Dataset):
         if self.transform_fn is not None and mask is not None:
             augmented = self.transform_fn(image=image, mask=mask)
             return augmented["image"], augmented["mask"]
+            # return augmented["image"], torch.from_numpy(mask).float()
 
         elif self.transform_fn is None and mask is not None:
             _image = torch.tensor(image).float().permute(2, 0, 1)
@@ -258,28 +318,25 @@ class ContrailsDatasetV2(Dataset):
 
     def __getitem__(self, index: int) -> dict[str, torch.Tensor]:
         img_path = self.img_paths[index]
-        record_data = read_record(img_path)
-        n_times_before = 4
-        raw_image = (
-            get_false_color(record_data)[..., n_times_before]
-            .reshape(256, 256, 3)
-            .astype(np.float32)
-        )
-        pixel_mask = (
-            np.load(img_path / "human_pixel_masks.npy")
-            .reshape(256, 256)
-            .astype(np.float32)
-        )
 
         match self.phase:
             case "train":
-                individual_mask = np.load(
-                    img_path / "human_individual_masks.npy"
-                ).astype(np.float32)
-                if self.use_soft_label:
-                    mask = soft_label(individual_mask).astype(np.float32)
-                else:
-                    mask = pixel_mask
+                if self.mask_paths is None:
+                    raise ValueError("mask_paths must be set when phase=train")
+                if self.avg_mask_paths is None:
+                    raise ValueError("avg_mask_paths must be set when phase=train")
+
+                mask_path = self.mask_paths[index]
+                avg_mask_path = self.avg_mask_paths[index]
+
+                raw_image = np.load(img_path).astype(np.float32)
+                # raw_image = fixed_offset_img(raw_image)
+                pixel_mask = np.load(mask_path).astype(np.float32)
+                avg_mask = np.load(avg_mask_path).astype(np.float32)
+
+                mask = avg_mask if self.use_soft_label else pixel_mask
+                if raw_image.shape != (256, 256, 3):
+                    mask = cv2.resize(mask, (512, 512), interpolation=cv2.INTER_LINEAR)
 
                 image, target = self._transform(raw_image, mask)
                 if target is None:
@@ -292,12 +349,39 @@ class ContrailsDatasetV2(Dataset):
                 }
 
             case "val":
+                if self.mask_paths is None:
+                    raise ValueError("mask_paths must be set when phase=train")
+
+                mask_path = self.mask_paths[index]
+                raw_image = np.load(img_path).astype(np.float32)
+                # raw_image = fixed_offset_img(raw_image)
+                pixel_mask = np.load(mask_path).astype(np.float32)
+
+                if raw_image.shape != (256, 256, 3):
+                    pixel_mask = cv2.resize(
+                        pixel_mask, (512, 512), interpolation=cv2.INTER_LINEAR
+                    )
+
                 image, target = self._transform(raw_image, pixel_mask)
                 if target is None:
                     raise ValueError("target must not be None")
                 return {"image": image, "target": target}
 
             case "test":
+                record_data = read_record(img_path)
+                n_times_before = 4
+                raw_image = (
+                    get_false_color(record_data)[..., n_times_before]
+                    .reshape(256, 256, 3)
+                    .astype(np.float32)
+                )
+                # raw_image = fixed_offset_img(raw_image)
+
+                pixel_mask = (
+                    np.load(img_path / "human_pixel_masks.npy")
+                    .reshape(256, 256)
+                    .astype(np.float32)
+                )
                 image, _ = self._transform(raw_image)
                 return {"image": image}
 
@@ -404,4 +488,35 @@ if __name__ == "__main__":
     cls_dataset = ClsDataset(img_dirs=img_dirs)
     print(len(cls_dataset))
     batch = cls_dataset[0]
-    print(batch)
+    # print(batch)
+
+    import matplotlib.pyplot as plt
+    from albumentations.pytorch import ToTensorV2
+
+    img = np.load(Path("./input/prepared_np_imgs_weight1/195731008142151/image.npy"))
+    print(img.shape)
+    fixed_img = fixed_offset_img(img)
+    print(fixed_img.shape)
+
+    img = (
+        T.Resize(512, antialias=True)(ToTensorV2()(image=img)["image"])  # type: ignore
+        .permute(1, 2, 0)
+        .numpy()
+    )
+    fig, (axes_0, axes_1) = plt.subplots(1, 2, figsize=(10, 5))
+    # assert isinstance(axes, plt.Axes)
+    assert isinstance(fig, plt.Figure)
+    assert isinstance(axes_0, plt.Axes)
+    assert isinstance(axes_1, plt.Axes)
+
+    axes_0.imshow(img, alpha=0.5)
+    axes_0.set_xticks(np.arange(0, 512, 64))  # type: ignore
+    axes_0.set_yticks(np.arange(0, 512, 64))  # type: ignore
+    axes_0.grid(which="both", color="white", linewidth=2)
+
+    axes_1.imshow(fixed_img, alpha=0.5)
+    axes_1.set_yticks(np.arange(0, 512, 64))  # type: ignore
+    axes_1.set_xticks(np.arange(0, 512, 64))  # type: ignore
+    axes_1.grid(which="both", color="white", linewidth=2)
+
+    fig.savefig("./output/eda/fixed_offset.png")

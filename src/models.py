@@ -210,37 +210,54 @@ class UnetDecoder(nn.Module):
         dropout: float = 0.0,
     ) -> None:
         super().__init__()
+        # encoder: [64, 96, 192, 384, 768]
+        # decoder: [256, 128, 64, 32, 16]
+
+        # [768, 384, 192, 96, 64] -> [64, 96, 192, 384, 768]
         encoder_channels = encoder_channels[::-1]
         # -- computing blocks input and output channels
+        # [64]
         head_channels = encoder_channels[0]
+        # [64, 256, 128, 64, 32]
         in_channels = [head_channels] + list(decoder_channels[:-1])
+        # [96, 192, 384, 768, 0]
         skip_channels = list(encoder_channels[1:]) + [0]
+        # [256, 128, 64, 32, 16]
         out_channels = decoder_channels
         self.center = nn.Identity()
 
         # -- Combine decoder keyword arguments
-        def _decorder_block(
-            channels: tuple[int, int, int],
-        ) -> DecoderBlock:
-            in_ch, skip_ch, out_ch = channels
-            return DecoderBlock(
-                in_channels=in_ch,
-                out_channels=out_ch,
-                skip_channels=skip_ch,
-                use_batchnorm=use_batchnorm,
-                dropout=dropout,
-            )
-
         self.blocks = nn.ModuleList(
-            map(_decorder_block, zip(in_channels, skip_channels, out_channels))
+            [
+                DecoderBlock(
+                    in_channels=in_ch,
+                    out_channels=out_ch,
+                    skip_channels=skip_ch,
+                    use_batchnorm=use_batchnorm,
+                    dropout=dropout,
+                )
+                for (in_ch, skip_ch, out_ch) in zip(
+                    in_channels, skip_channels, out_channels
+                )
+            ]
         )
 
-    def forward(self, features: torch.Tensor) -> torch.Tensor:
+    def forward(self, features: list[torch.Tensor]) -> torch.Tensor:
+        """
+        Args:
+            features: list of tensors from encoder.
+                    (256x256, 128x128, 64x64, 32x32, 16x16)
+        """
         features = features[::-1]  # reverse channels to start from head of encoder
 
         head = features[0]
         skips = features[1:]
 
+        # 0 torch.Size([8, 256, 32, 32])
+        # 1 torch.Size([8, 128, 64, 64])
+        # 2 torch.Size([8, 64, 128, 128])
+        # 3 torch.Size([8, 32, 256, 256])
+        # 4 torch.Size([8, 16, 512, 512])
         x = self.center(head)
         for i, decoder_block in enumerate(self.blocks):
             skip = skips[i] if i < len(skips) else None
@@ -278,6 +295,7 @@ class CustomedUnet(nn.Module):
         pretrained: bool = True,
         decoder_channels: list[int] = [256, 128, 64, 32, 16],
         dropout: float = 0.0,
+        img_size: int = 512,
         tta_type: str | None = None,
     ) -> None:
         super().__init__()
@@ -285,13 +303,21 @@ class CustomedUnet(nn.Module):
             name, features_only=True, pretrained=pretrained
         )
         encoder_channels = self.encoder.feature_info.channels()
-        _check_reduction(self.encoder.feature_info.reduction())
         if len(encoder_channels) != len(decoder_channels):
             raise ValueError(
                 "Encoder channels and decoder channels should have the same length"
             )
 
-        self.decoder = UnetDecoder(encoder_channels, decoder_channels, dropout=dropout)
+        _check_reduction(self.encoder.feature_info.reduction())
+
+        print(name, encoder_channels, decoder_channels)
+
+        self.decoder = UnetDecoder(
+            encoder_channels=encoder_channels,
+            decoder_channels=decoder_channels,
+            dropout=dropout,
+            use_batchnorm=True,
+        )
         self.segmentation_head = smp.base.SegmentationHead(
             in_channels=decoder_channels[-1],
             out_channels=1,
@@ -303,11 +329,30 @@ class CustomedUnet(nn.Module):
         # Expected fix the difference between labens and imgs about 0.5 px
         # , and downsampling 2x (512 -> 256)
         # if wanna keep img size, use stride=1
-        self.asym_conv = nn.Sequential(
-            nn.Conv2d(1, 25, kernel_size=5, stride=2, padding=2),  # downsample 2x
-            nn.ReLU(inplace=True),
-            nn.Conv2d(25, 1, kernel_size=1),
-        )
+        if img_size == 512:
+            hidden_size = 25
+            self.asym_conv = nn.Sequential(
+                nn.Conv2d(
+                    1, hidden_size, kernel_size=(5, 5), stride=2, padding=2
+                ),  # downsample 2x
+                nn.ReLU(inplace=True),
+                nn.Conv2d(hidden_size, 1, kernel_size=1),
+            )
+        elif img_size == 256:
+            hidden_size = 9
+            self.asym_conv = nn.Sequential(
+                nn.Conv2d(
+                    1,
+                    hidden_size,
+                    kernel_size=(3, 3),
+                    padding=1,
+                    padding_mode="replicate",
+                ),  # downsample 2x
+                nn.ReLU(inplace=True),
+                nn.Conv2d(hidden_size, 1, kernel_size=1),
+            )
+        else:
+            raise ValueError(f"img_size should be 256 or 512, but got {img_size}")
         self.tta = TTA(tta_type) if tta_type is not None else None
 
     def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor | None]:
@@ -421,7 +466,6 @@ class ContrailsModel(nn.Module):
             self.downsample2x = tv.transforms.Resize(
                 size=(256, 256),
                 interpolation=tv.transforms.InterpolationMode.BILINEAR,
-                max_size=256,
                 antialias=True,  # type: ignore
             )
 
@@ -445,8 +489,6 @@ class ContrailsModel(nn.Module):
             preds = self.downsample2x(logits)
         else:
             preds = logits
-        # preds = preds.squeeze(1)
-        # logits = logits.squeeze(1)
 
         # logist: (batch_size, height, width)
         outputs = {
@@ -700,8 +742,23 @@ if __name__ == "__main__":
     # print(out["logits"].shape)
     # print(out["preds"].shape)
 
-    model = CustomedUnet(name="maxvit_small_tf_512", pretrained=True)
+    from src.train_tools import seed_everything
+
+    seed_everything(42)
+
+    model = CustomedUnet(name="maxvit_tiny_tf_512", pretrained=True)
     im = torch.randn(8, 3, 512, 512)
-    out = model(im)
-    print(out["logits"].shape)
-    print(out["preds"].shape)
+    out1 = model(im)
+    print(out1["logits"].shape)
+    print(out1["preds"].shape)
+
+    seed_everything(42)
+
+    model = CustomedUnet(name="maxvit_tiny_tf_512.in1k", pretrained=True)
+    # im = torch.randn(8, 3, 512, 512)
+    out2 = model(im)
+    print(out2["logits"].shape)
+    print(out2["preds"].shape)
+
+    assert (out1["logits"] == out2["logits"]).all()
+    assert (out1["preds"] == out2["preds"]).all()

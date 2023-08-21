@@ -1,5 +1,6 @@
 import os
 import random
+import time
 from collections import namedtuple
 from dataclasses import dataclass
 from logging import getLogger
@@ -8,6 +9,7 @@ from typing import (
     Any,
     Callable,
     Iterable,
+    NamedTuple,
     Protocol,
     Sequence,
     TypeAlias,
@@ -24,7 +26,7 @@ import torch.optim as optim
 import ttach as tta
 from torch.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
-from torch.nn.utils.clip_grad import clip_grad_norm_
+from torch.nn.utils.clip_grad import clip_grad_norm_, clip_grad_value_
 from torch.utils.data import DataLoader
 from tqdm.auto import tqdm
 
@@ -202,7 +204,7 @@ class AverageMeter:
         self.sum += value * n
         self.count += n
         self.avg = self.sum / self.count
-        self.std = float(np.std(self.rows))
+        self.std = float(np.std(self.rows)) if len(self.rows) > 0 else 0.0
         self.rows.append(value)
 
     def to_dict(self) -> dict[str, list[float | int] | str | float]:
@@ -291,8 +293,8 @@ def seed_everything(seed: int = 42) -> None:
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True  # type: ignore
+    torch.backends.cudnn.benchmark = False  # type: ignore
     torch.autograd.anomaly_mode.set_detect_anomaly(False)
 
 
@@ -325,7 +327,7 @@ def _freeze_model(model: nn.Module, freeze_keys: Iterable[str] = ["encoder"]) ->
 def scheduler_step(
     scheduler: optim.lr_scheduler.LRScheduler, loss: float, epoch: int | None = None
 ) -> None:
-    if loss in [float("inf"), float("-inf"), None, torch.nan]:
+    if loss in [float("inf"), float("-inf"), None, torch.nan, float("nan")]:
         return
 
     if epoch is None:
@@ -400,6 +402,8 @@ def init_average_meters(metric_names: Sequence[str]) -> dict[str, AverageMeter]:
 class ForwardOutputs:
     preds: torch.Tensor
     targets: torch.Tensor
+    logits: torch.Tensor | None = None
+    raw_targets: torch.Tensor | None = None
     cls_preds: torch.Tensor | None = None
 
 
@@ -438,6 +442,7 @@ class PostProcessFn(Protocol):
     """Postprocess function protocol
 
     Signature: (preds: torch.Tensor, targets: torch.Tensor) -> PostprocessOutputs
+
     """
 
     def __call__(
@@ -467,18 +472,23 @@ def default_segmentation_forward_fn(
         raise TypeError(f"{type(image) = }, {type(target) = }")
 
     output = model(image)
-    # logits = output["logits"]
-    logits: torch.Tensor = output["preds"]
-    logits = logits.squeeze(1)
+    logits = output["logits"].squeeze(1)
+    preds = output["preds"].squeeze(1)
+
     if target.shape[1:] != (256, 256):
-        target = F.interpolate(
-            target.unsqueeze(1).float(), size=256, mode="bilinear"
+        resized_target = F.interpolate(
+            target.unsqueeze(1).float(), size=(256, 256), mode="bilinear"
         ).squeeze(1)
+    else:
+        resized_target = target.squeeze(1).float()
 
-    return ForwardOutputs(preds=logits, targets=target)
+    assert (
+        resized_target.shape == preds.shape
+    ), f"{resized_target.shape = }, {preds.shape = }"
 
-
-_T = TypeVar("_T", bound=BatchAnnotation)
+    return ForwardOutputs(
+        preds=preds, targets=resized_target, logits=logits, raw_targets=target
+    )
 
 
 def default_augmentation_fn(
@@ -533,18 +543,13 @@ def default_postprocess_fn(
 ) -> PostprocessOutputs:
     # make a whole image prediction
     # y_preds: (N, H, W), target: (N, H, W)
-    y_preds = torch.sigmoid(preds).to("cpu").detach()
-    target = targets.to("cpu").detach()
 
-    y_preds = y_preds.numpy()
-    target = target.numpy()
+    y_preds = preds.sigmoid().cpu().detach().numpy()
+    target = targets.cpu().detach().numpy()
 
     assert isinstance(y_preds, np.ndarray)
     assert isinstance(target, np.ndarray)
 
-    # shape: (N, H, W)
-    # preds = (y_preds > 0.5).astype(np.uint8)
-    # preds = np.array([remove_tiny_pred(pred, min_size=30) for pred in preds])
     return PostprocessOutputs(preds=y_preds, targets=target)
 
 
@@ -570,7 +575,10 @@ def _init_awp(
     )
 
 
-TrainAssets = namedtuple("TrainAssets", ["loss", "cls_acc"])
+class TrainAssets(NamedTuple):
+    loss: float
+    duration: int
+    cls_acc: float | None = None
 
 
 def train_one_epoch(
@@ -583,7 +591,8 @@ def train_one_epoch(
     optimizer: optim.Optimizer,
     scheduler: optim.lr_scheduler.LRScheduler,
     device: torch.device,
-    metric_names: list[str] = ["loss", "cls_acc"],
+    metrics_fn: MetricsFn,
+    metric_names: list[str] = ["loss", "dice"],
     max_grad_norm: float = 1000.0,
     cls_loss_fn: LossFn | None = None,
     schedule_per_step: bool = False,
@@ -639,14 +648,15 @@ def train_one_epoch(
 
         forward_fn (ForwardFn, optional): forward function. Defaults to default_segmentation_forward_fn. Signature: (model: nn.Module, batch: T<:BatchAnnotation>) -> ForwardOutputs.
 
-        metric_names (list[str], optional): metric names. Defaults to ["loss", "cls_acc"].
+        metric_names (list[str], optional): metric names. Defaults to ["loss"].
 
     Returns:
         TrainAssets: train assets
     """
-    awp = _init_awp(model, optimizer, scaler, loss_fn, awp_params)
     # used for freeze model
     is_frozen = False
+
+    start = time.time()
 
     # --- set up average meters for logging and evaluation
     if "loss" not in metric_names:
@@ -663,6 +673,8 @@ def train_one_epoch(
         desc="Train Per Epoch",
     )
     for step, batch in pbar:
+        optimizer.zero_grad(set_to_none=True)
+
         # TODO: Dataset修正して書き直す
         if isinstance(batch, tuple):
             batch = {"image": batch[0], "target": batch[1]}
@@ -680,12 +692,34 @@ def train_one_epoch(
             _freeze_model(model, freeze_keys=freeze_params.freeze_keys)
             is_frozen = True  # cache state of freeze
 
+        # --- Forward
+        image = batch["image"]
+        target = batch["target"]
         with autocast(device_type=device.type, enabled=use_amp):
-            output = forward_fn(model=model, batch=batch)
+            # output = forward_fn(model=model, batch=batch)
+            outs = model(image)
 
-        # signature of loss_fn: (torch.Tensor, torch.Tensor) -> torch.Tensor
+        logits = outs["logits"].squeeze(1)
+        preds = outs["preds"].squeeze(1)
+        if target.shape[1:] != (256, 256):
+            resized_target = F.interpolate(
+                target.unsqueeze(1).float(), size=(256, 256), mode="bilinear"
+            ).squeeze(1)
+        else:
+            resized_target = target.squeeze(1).float()
+
+        output = ForwardOutputs(
+            preds=preds, targets=resized_target, logits=logits, raw_targets=target
+        )
+
+        if output.logits is None or output.raw_targets is None:
+            raise ValueError(f"{output.logits = }, {output.raw_targets = }")
+
+        # --- Signature of loss_fn: (torch.Tensor, torch.Tensor) -> torch.Tensor
+        # loss = loss_fn(output.logits, output.raw_targets)
         loss = loss_fn(output.preds, output.targets)
 
+        # --- Aux task
         if (
             aux_params is not None
             and output.cls_preds is not None
@@ -702,32 +736,32 @@ def train_one_epoch(
 
             wandb.log({"train/cls_loss": cls_loss.item(), "train/cls_acc": acc.item()})
 
-        loss /= grad_accum_step_num
+        loss = loss / min(grad_accum_step_num, 1)
+        average_meters["loss"].update(value=loss.item(), n=batch_size)
 
-        if not my_utils.is_nan(loss.item()):
-            average_meters["loss"].update(value=loss.item(), n=batch_size)
+        # --- Metrics
+        preds = output.preds.sigmoid().cpu().detach().numpy()
+        targets = output.targets.cpu().detach().numpy()
+        train_metrics = metrics_fn(preds=preds, target=targets)
+        train_metrics["loss"] = loss.item()
+        for name, metric_value in train_metrics.items():
+            average_meters[name].update(value=metric_value, n=batch_size)
 
         # --- Backprop
         scaled_loss = scaler.scale(loss)
         if not isinstance(scaled_loss, torch.Tensor):
             raise ValueError(f"Not Expected {scaled_loss = }, {type(scaled_loss) = }")
+
         scaled_loss.backward()
 
-        # --- AWP
-        # NOTE: AWP should be called at last some epochs
-        if (
-            awp is not None
-            and awp_params is not None
-            and epoch >= awp_params.start_epoch
-        ):
-            awp.attack_backward(batch["image"], batch["target"], epoch)
-
         if (step + 1) % grad_accum_step_num == 0:
-            clip_grad_norm_(model.parameters(), max_grad_norm)
+            # Since not change gradient direction, usually use thie function
+            # clip_grad_norm_(model.parameters(), max_grad_norm)
+            clip_grad_value_(model.parameters(), max_grad_norm)  #
 
+            # update parameters
             scaler.step(optimizer)
             scaler.update()
-            optimizer.zero_grad(set_to_none=True)
 
             if schedule_per_step:
                 scheduler_step(scheduler, loss=loss.item())
@@ -735,14 +769,13 @@ def train_one_epoch(
             def _make_logging_assets(name: str) -> dict[str, float]:
                 return {
                     f"train/fold{fold}_{name}_avg": average_meters[name].avg,
-                    f"train/fold{fold}_{name}_std": average_meters[name].std,
+                    # f"train/fold{fold}_{name}_std": average_meters[name].std,
                 }
 
             log_assets = list(map(_make_logging_assets, metric_names))
             log_assets = my_utils.flatten_dict(log_assets)
             learning_rate = optimizer.param_groups[0]["lr"]
             log_assets.update({"lr": learning_rate})
-
             wandb.log(log_assets)
             log_assets.update({"epoch": epoch})
             pbar.set_postfix(log_assets)
@@ -750,18 +783,23 @@ def train_one_epoch(
     train_assets = TrainAssets(
         loss=average_meters["loss"].avg,
         cls_acc=average_meters["cls_acc"].avg if aux_params is not None else None,
+        duration=int(time.time() - start),
     )
     return train_assets
 
 
-ValidAssets = namedtuple("ValidAssets", ["loss", "dice"])
+class ValidAssets(NamedTuple):
+    loss: float
+    dice: float
+    global_dice: float
+    duration: int
 
 
 def make_tta_model(model: nn.Module) -> nn.Module:
     transform = tta.Compose(
         [
             tta.HorizontalFlip(),
-            tta.VerticalFlip(),
+            # tta.VerticalFlip(),
             tta.Rotate90(angles=[0, 90, 180, 270]),
         ]
     )
@@ -789,7 +827,6 @@ def valid_one_epoch(
     metric_names: list[str] = ["loss", "dice"],
     forward_fn: ForwardFn = default_segmentation_forward_fn,
     postprocess_fn: PostProcessFn = default_postprocess_fn,
-    make_tta_model_fn: TTAModelFn | None = None,
 ) -> ValidAssets:
     """Validate one epoch
 
@@ -830,8 +867,14 @@ def valid_one_epoch(
         metric_names.append("loss")
     average_meters = init_average_meters(metric_names=metric_names)
 
-    if make_tta_model_fn is not None:
-        model = make_tta_model_fn(model)
+    start = time.time()
+
+    model = make_tta_model(model)
+
+    # for global dice
+    tp = 0
+    positive_preds = 0
+    positive_targets = 0
 
     pbar = tqdm(
         enumerate(valid_loader),
@@ -844,14 +887,28 @@ def valid_one_epoch(
         if isinstance(batch, tuple):
             batch = {"image": batch[0], "target": batch[1]}
 
-        batch_size = batch["target"].size(0)
         batch = send_tensor_to_device(batch=batch, device=device)
+        batch_size = batch["target"].size(0)
 
+        # --- Forward
+        image = batch["image"]
+        target = batch["target"]
         with (
             torch.inference_mode(),
             autocast(device_type=device.type, enabled=use_amp),
         ):
-            output = forward_fn(model=model, batch=batch)
+            # output = forward_fn(model=model, batch=batch)
+            outs = model(image)
+        # logits = outs["logits"].squeeze(1)
+        preds = outs["preds"].squeeze(1)
+        if target.shape[1:] != (256, 256):
+            resized_target = F.interpolate(
+                target.unsqueeze(1).float(), size=(256, 256), mode="bilinear"
+            ).squeeze(1)
+        else:
+            resized_target = target.squeeze(1).float()
+
+        output = ForwardOutputs(preds=preds, targets=resized_target)
 
         loss = loss_fn(output.preds, output.targets)
 
@@ -878,37 +935,53 @@ def valid_one_epoch(
                 }
             )
 
-        postprocess_outputs = postprocess_fn(preds=output.preds, targets=output.targets)
-        valid_metrics = metrics_fn(
-            preds=postprocess_outputs.preds, target=postprocess_outputs.targets
-        )
+        preds = output.preds.sigmoid().cpu().detach().numpy()
+        targets = output.targets.cpu().detach().numpy()
+        valid_metrics = metrics_fn(preds=preds, target=targets)
+
+        # Comupte global dice
+        tp += (preds * targets).sum()
+        positive_preds += preds.sum()
+        positive_targets += targets.sum()
+
         valid_metrics.update({"loss": loss.item()})
 
-        # aggregate metrics
+        # Aggregate metrics
         if not my_utils.is_nan(loss.item()):
             average_meters["loss"].update(value=loss.item(), n=batch_size)
 
-        # -- logging metrics
-        def _update_metric(name: str) -> None:
-            metric_value = valid_metrics[name]
+        # Logging metrics
+        for name, metric_value in valid_metrics.items():
             average_meters[name].update(value=metric_value, n=batch_size)
 
-        list(map(_update_metric, metric_names))
+        valid_log_assets: dict[str, int | float] = {"epoch": epoch}
+        for name, average_meter in average_meters.items():
+            valid_log_assets[f"valid/fold{fold}_{name}_avg"] = average_meter.avg
+            # valid_log_assets[f"valid/fold{fold}_{name}_std"] = average_meter.std
 
-        def _make_logging_assets(name: str) -> dict[str, float]:
-            return {
-                f"valid/fold{fold}_{name}_avg": average_meters[name].avg,
-                f"valid/fold{fold}_{name}_std": average_meters[name].std,
-            }
-
-        valid_log_assets = list(map(_make_logging_assets, metric_names))
-        valid_log_assets = my_utils.flatten_dict(valid_log_assets)
         wandb.log(valid_log_assets)
-
-        valid_log_assets.update({"epoch": epoch})
         pbar.set_postfix(valid_log_assets)
 
+        if debug:
+            nd_imgs = batch["image"].cpu().detach().permute(0, 2, 3, 1).numpy()
+            nd_masks = batch["target"].cpu().detach().numpy()
+            nd_preds = output.preds.sigmoid().cpu().detach().numpy()
+            for i in range(batch_size):
+                nd_img = nd_imgs[i]
+                nd_mask = nd_masks[i]
+                fig, ax = my_utils.plot_a_label_on_a_image(nd_img, nd_mask)
+                ax.imshow(nd_preds, alpha=0.5, cmap="Reds", label="preds")
+                ax.legend()
+                fig.savefig(f"./debug/step{step}_{i}_mask.png")
+
+    global_dice = 2 * tp / (positive_preds + positive_targets + 1e-6)
+    wandb.log({f"valid/fold{fold}_global_dice": global_dice})
+    logger.info(f"global dice: {global_dice}")
+
     valid_assets = ValidAssets(
-        loss=average_meters["loss"].avg, dice=average_meters["dice"].avg
+        loss=average_meters["loss"].avg,
+        dice=average_meters["dice"].avg,
+        global_dice=global_dice,
+        duration=int(time.time() - start),
     )
     return valid_assets

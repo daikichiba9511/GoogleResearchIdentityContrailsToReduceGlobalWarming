@@ -1,10 +1,11 @@
 import numpy as np
+import segmentation_models_pytorch as smp
 import torch
 
-__all__ = ["dice", "calc_metrics"]
+__all__ = ["calc_metrics"]
 
 
-def dice(pred: np.ndarray, mask: np.ndarray, eps: float = 1e-7) -> float:
+def _dice(pred: np.ndarray, mask: np.ndarray, eps: float = 1e-7) -> float:
     intersection = (pred * mask).sum()
     pred_sum = pred.sum()
     mask_sum = mask.sum()
@@ -19,26 +20,40 @@ def dice_coef(
     target = target.astype(np.float32).flatten()
     preds = (preds > thr).astype(np.float32).flatten()
     intersection = np.sum(preds * target)
-    union = np.sum(preds) + np.sum(target)
+    union = preds.sum() + target.sum()
     dice = (2.0 * intersection + eps) / (union + eps)
     return dice
 
 
-def calc_metrics(preds: np.ndarray, target: np.ndarray) -> dict[str, float]:
+def calc_metrics(
+    preds: np.ndarray | torch.Tensor, target: np.ndarray | torch.Tensor
+) -> dict[str, float]:
+    if not isinstance(preds, torch.Tensor):
+        preds = torch.from_numpy(preds).float()
+    if not isinstance(target, torch.Tensor):
+        target = torch.from_numpy(target)
+
+    dice = smp.losses.DiceLoss(mode="binary", from_logits=True)
     dice_coef_value = dice(preds, target)
-    # dice_coef_value = dice_coef(preds, target, thr=0.5, eps=1e-7)
+    # dices = {}
+    # for thr in np.arange(0.3, 0.85, 0.5):
+    #     dice_coef_value = dice_coef(preds, target, thr=thr, eps=1e-5)
+    #     dices[f"dice_{thr}"] = dice_coef_value
 
     metrics = {
-        "dice": dice_coef_value,
+        "dice": 1 - dice_coef_value.item(),
+        # **dices,
     }
     return metrics
 
 
 def _test_dice() -> None:
-    pred = torch.randint(0, 2, size=(256, 256))
-    mask = torch.randint(0, 2, size=(256, 256))
-    dice_score = dice(pred, mask)
-    print(dice_score)
+    pred = torch.randn((3, 1, 256, 256)).numpy()
+    mask = torch.randint(0, 2, size=(3, 1, 256, 256)).numpy()
+    print(pred.shape, mask.shape)
+    dice = smp.losses.DiceLoss(mode="binary", from_logits=True)
+    metrics = calc_metrics(pred, mask)
+    print(metrics)
     print("Run test_dice() successfully")
 
 

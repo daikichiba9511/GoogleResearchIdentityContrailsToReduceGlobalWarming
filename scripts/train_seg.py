@@ -153,19 +153,19 @@ def get_loaders_v2(
     valid_aug = A.Compose(config.valid_aug_list)  # type: ignore
     num_workers = mp.cpu_count() if not debug else 1
 
-    def _make_df(data_dir: Path, debug: bool = False) -> pd.DataFrame:
-        data_dirs = list(data_dir.glob("*"))
-        if len(data_dirs) == 0:
-            raise FileNotFoundError(f"{data_dir} is empty")
-        if debug:
-            data_dirs = data_dirs[:100]
-        return pd.DataFrame({"path": data_dirs})
+    df = pd.read_csv("./input/prepared_np_imgs_weight1/metadata.csv")
+    train_df = df.query("is_train").reset_index(drop=True)
+    valid_df = df.query("not is_train").reset_index(drop=True)
+    if debug:
+        train_df = train_df[:100]
+        valid_df = valid_df[:100]
 
-    train_df = _make_df(config.data_root_path / "train", debug=debug)
-    valid_df = _make_df(config.data_root_path / "validation", debug=debug)
+    train_image_paths = train_df["image_path"].to_numpy().tolist()
+    valid_image_paths = valid_df["image_path"].to_numpy().tolist()
 
-    train_image_paths = train_df["path"].to_numpy().tolist()
-    valid_image_paths = valid_df["path"].to_numpy().tolist()
+    train_mask_paths = train_df["mask_path"].to_numpy().tolist()
+    train_avg_mask_paths = train_df["avg_mask_path"].to_numpy().tolist()
+    valid_mask_paths = valid_df["mask_path"].to_numpy().tolist()
 
     if config.with_pseudo_label:
         paths = list(Path(config.pseudo_label_dir).glob("*"))
@@ -179,12 +179,14 @@ def get_loaders_v2(
         transform_fn=train_aug,
         phase="train",
         use_soft_label=use_soft_label,
+        mask_paths=train_mask_paths,
+        avg_mask_paths=train_avg_mask_paths,
     )
     valid_dataset = ContrailsDatasetV2(
         img_paths=valid_image_paths,
         transform_fn=valid_aug,
         phase="val",
-        use_soft_label=use_soft_label,
+        mask_paths=valid_mask_paths,
     )
     train_loader = DataLoader(
         dataset=train_dataset,
@@ -253,23 +255,20 @@ def main(
         seed_everything(config.seed)
         logger.info(f"## Fold: {fold} ##")
 
-        # if config.use_soft_label:
-        if True:
-            train_loader, valid_loader = get_loaders_v2(
-                config,
-                debug=debug,
-                fold=fold,
-                positive_only=config.positive_only,
-                use_soft_label=config.use_soft_label,
-            )
-        else:
-            train_loader, valid_loader = get_loaders(
-                config,
-                remake_df=remake_df,
-                debug=debug,
-                fold=fold,
-                positive_only=config.positive_only,
-            )
+        train_loader, valid_loader = get_loaders_v2(
+            config,
+            debug=debug,
+            fold=fold,
+            positive_only=config.positive_only,
+            use_soft_label=config.use_soft_label,
+        )
+        # train_loader, valid_loader = get_loaders(
+        #     config,
+        #     remake_df=remake_df,
+        #     debug=debug,
+        #     fold=fold,
+        #     positive_only=config.positive_only,
+        # )
         logger.info(f"{config.arch =}")
         model: torch.nn.Module
         if config.arch == "UNETR_Segformer":
@@ -363,6 +362,7 @@ def main(
                 schedule_per_step=schedule_per_step,
                 max_grad_norm=config.max_grad_norm,
                 grad_accum_step_num=config.grad_accum_step_num,
+                metrics_fn=calc_metrics,
             )
             valid_assets = valid_one_epoch(
                 fold=fold,
@@ -374,15 +374,16 @@ def main(
                 metrics_fn=calc_metrics,
                 use_amp=use_amp,
                 debug=debug,
-                make_tta_model_fn=make_tta_model,
             )
             scheduler_step(scheduer, valid_assets.loss)
 
             logging_assets = {
                 "train/avg_loss": train_assets.loss,
                 "train/avg_cls_acc": train_assets.cls_acc,
+                "train/duration": train_assets.duration,
                 "valid/avg_loss": valid_assets.loss,
                 "valid/avg_dice": valid_assets.dice,
+                "valid/duration": valid_assets.duration,
             }
             logger.info(f"{epoch}: \n{pprint.pformat(logging_assets)}")
             wandb.log(logging_assets)

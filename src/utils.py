@@ -155,6 +155,8 @@ def plot_a_label_on_a_image(
 
     ax.imshow(image)
     ax.imshow(color_label, alpha=0.5, label="label")
+    ax.legend()
+    ax.set_title("Image with label")
 
     return fig, ax
 
