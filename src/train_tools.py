@@ -756,8 +756,8 @@ def train_one_epoch(
 
         if (step + 1) % grad_accum_step_num == 0:
             # Since not change gradient direction, usually use thie function
-            # clip_grad_norm_(model.parameters(), max_grad_norm)
-            clip_grad_value_(model.parameters(), max_grad_norm)  #
+            clip_grad_norm_(model.parameters(), max_grad_norm)
+            # clip_grad_value_(model.parameters(), max_grad_norm)  #
 
             # update parameters
             scaler.step(optimizer)
