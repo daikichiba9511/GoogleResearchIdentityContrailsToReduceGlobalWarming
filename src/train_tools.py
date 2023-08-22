@@ -736,7 +736,7 @@ def train_one_epoch(
 
             wandb.log({"train/cls_loss": cls_loss.item(), "train/cls_acc": acc.item()})
 
-        loss = loss / min(grad_accum_step_num, 1)
+        loss = loss / max(grad_accum_step_num, 1)
         average_meters["loss"].update(value=loss.item(), n=batch_size)
 
         # --- Metrics
