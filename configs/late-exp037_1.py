@@ -25,79 +25,6 @@ copy from exp035_4
 - try to use soft label
 - lr=1e-4
 
-# Log
-
-1. warmup_ratio=0.1 -> 0.43
-2. warmup_ratio=0.02 -> 0.0
-3. warmup_ratio=0.1,lr=1e-4 -> 0.0
-4. warmup_ratio=0.1,lr=1e-4,fix a bug of kernel_size=1 in Head -> 0.0
-5. warmup_ratio=0.1,lr=5e-4,fix a bug of kernel_size=1 in Head -> 0.0
-6. warmup_ratio=0.1,lr=1e-4,fix a bug of kernel_size=1 in Head, grad_accum=1 -> 0.0
-7. warmup_ratio=0.1,lr=5e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31 -> 0.0
-8. warmup_ratio=0.1,lr=8e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31 -> 0.0
-9. warmup_ratio=0.1,lr=8e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31, max_grad_norm=10.0 -> 0.07 (epoch5)
-10. warmup_ratio=0.1,lr=8e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31, max_grad_norm=1000.0 -> 0.266 (epoch7)
-11. warmup_ratio=0.1,lr=1e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31, max_grad_norm=1000.0 -> 0.271 (epoch11)
-warmup_ratio=0.1,lr=1e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31, max_grad_norm=1000.0, RoandomState90(p=1.0) -> 0.292 (epoch18)
-warmup_ratio=0.05,lr=1e-4,fix a bug of kernel_size=1 in Head, grad_accum=1, pos_weight=7.31, max_grad_norm=1000.0, RoandomState90(p=1.0) -> 0.265 (epoch39)
-
-## 12
-
-- warmup_ratio=0.05
-- lr=1e-4
-- fix a bug of kernel_size=1 in Head
-- grad_accum=1
-- pos_weight=7.31
-- max_grad_norm=1000.0
-- RoandomState90(p=1.0)
-- without vflip
-
-score: 0.222 (epoch15)
-
-## 13
-
-retry 12 without RandomResizedCrop,CropNonEmptyMaskIfExists
-
-- warmup_ratio=0.05
-- lr=1e-4
-- fix a bug of kernel_size=1 in Head
-- grad_accum=1
-- pos_weight=7.31
-- max_grad_norm=1000.0
-- RoandomState90(p=1.0)
-- without vflip
-
-score: 0.247 (epoch18)
-
-## 14
-
-without augmentation to avoid asymmetry in the mask due to rotation
-
-- warmup_ratio=0.05
-- lr=1e-4
-- fix a bug of kernel_size=1 in Head
-- grad_accum=1
-- pos_weight=7.31
-- max_grad_norm=1000.0
-- without augmentation
-
-score: 0.274 (epoch39)
-
-## 14
-
-turn off amp
-
-- warmup_ratio=0.05
-- lr=1e-4
-- fix a bug of kernel_size=1 in Head
-- grad_accum=1
-- pos_weight=7.31
-- max_grad_norm=1000.0
-- without augmentation
-- turn off amp
-
-score: 0.274 (epoch39)
-
 # Reference
 
 [1] https://smp.readthedocs.io/en/latest/encoders.html
@@ -148,7 +75,7 @@ config = {
     "aux_params": None,
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 1e-4,
+        "lr": 1e-3,
         "weight_decay": 0.0,
         "eps": 1e-4,
     },

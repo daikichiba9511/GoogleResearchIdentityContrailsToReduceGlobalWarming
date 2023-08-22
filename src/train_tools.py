@@ -24,6 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import ttach as tta
+from timm.scheduler import CosineLRScheduler
 from torch.amp.autocast_mode import autocast
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.utils.clip_grad import clip_grad_norm_, clip_grad_value_
@@ -221,9 +222,9 @@ class EarlyStopping:
         self,
         patience: int = 7,
         verbose: bool = False,
-        delta: float = 0,
         logger_fn: Callable = print,
         save_dir: Path = Path("./output"),
+        delta: float = 0,
         fold: str = "0",
         save_prefix: str = "",
         direction: str = "maximize",
@@ -333,7 +334,7 @@ def scheduler_step(
     if epoch is None:
         scheduler.step()
     else:
-        scheduler.step(epoch=epoch)
+        scheduler.step(epoch)
 
 
 @dataclass(frozen=True)
@@ -578,6 +579,7 @@ def _init_awp(
 class TrainAssets(NamedTuple):
     loss: float
     duration: int
+    dice: float
     cls_acc: float | None = None
 
 
@@ -598,12 +600,11 @@ def train_one_epoch(
     schedule_per_step: bool = False,
     use_amp: bool = False,
     grad_accum_step_num: int = 1,
-    awp_params: AWPParams | None = None,
     aug_params: AugParams | None = None,
     augmentation_fn: AugmentationFn = default_augmentation_fn,
     aux_params: AuxParams | None = None,
     freeze_params: FreezeParams | None = None,
-    forward_fn: ForwardFn = default_segmentation_forward_fn,
+    thr: float = 0.5,
 ) -> TrainAssets:
     """Train one epoch
 
@@ -640,13 +641,15 @@ def train_one_epoch(
 
         aug_params (AugParams, optional): augmentation params. Defaults to None.
 
-        augmentation_fn (AugmentationFn, optional): augmentation function. Defaults to default_augmentation_fn. Signature: (aug_params: AugParams, epoch: int, batch: T<:BatchAnnotation) -> T<:BatchAnnotation.
+        augmentation_fn (AugmentationFn, optional): augmentation function. Defaults to default_augmentation_fn.
+                    Signature: (aug_params: AugParams, epoch: int, batch: T<:BatchAnnotation) -> T<:BatchAnnotation.
 
         aux_params (AuxParams, optional): aux params. Defaults to None.
 
         freeze_params (FreezeParams, optional): freeze params. Defaults to None.
 
-        forward_fn (ForwardFn, optional): forward function. Defaults to default_segmentation_forward_fn. Signature: (model: nn.Module, batch: T<:BatchAnnotation>) -> ForwardOutputs.
+        forward_fn (ForwardFn, optional): forward function. Defaults to default_segmentation_forward_fn.
+                    Signature: (model: nn.Module, batch: T<:BatchAnnotation>) -> ForwardOutputs.
 
         metric_names (list[str], optional): metric names. Defaults to ["loss"].
 
@@ -655,7 +658,6 @@ def train_one_epoch(
     """
     # used for freeze model
     is_frozen = False
-
     start = time.time()
 
     # --- set up average meters for logging and evaluation
@@ -670,7 +672,7 @@ def train_one_epoch(
         enumerate(train_loader),
         total=len(train_loader),
         dynamic_ncols=True,
-        desc="Train Per Epoch",
+        desc="Train",
     )
     for step, batch in pbar:
         optimizer.zero_grad(set_to_none=True)
@@ -695,25 +697,24 @@ def train_one_epoch(
             # output = forward_fn(model=model, batch=batch)
             outs = model(image)
 
-        logits = outs["logits"].squeeze(1)
-        preds = outs["preds"].squeeze(1)
-        if target.shape[1:] != (256, 256):
+        if target.shape[1:] != (512, 512):
             resized_target = F.interpolate(
-                target.unsqueeze(1).float(), size=(256, 256), mode="bilinear"
+                target.unsqueeze(1).float(), size=(512, 512), mode="bilinear"
             ).squeeze(1)
         else:
             resized_target = target.squeeze(1).float()
 
         output = ForwardOutputs(
-            preds=preds, targets=resized_target, logits=logits, raw_targets=target
+            preds=outs["preds"].squeeze(1),
+            targets=resized_target,
+            logits=outs["logits"].squeeze(1),
+            raw_targets=target,
         )
 
         if output.logits is None or output.raw_targets is None:
             raise ValueError(f"{output.logits = }, {output.raw_targets = }")
-
-        # --- Signature of loss_fn: (torch.Tensor, torch.Tensor) -> torch.Tensor
-        # loss = loss_fn(output.logits, output.raw_targets)
-        loss = loss_fn(output.preds, output.targets)
+        loss = loss_fn(output.logits, output.targets)
+        # loss = loss_fn(output.preds, output.raw_targets)
 
         # --- Aux task
         if (
@@ -732,52 +733,62 @@ def train_one_epoch(
 
             wandb.log({"train/cls_loss": cls_loss.item(), "train/cls_acc": acc.item()})
 
+        if my_utils.is_nan(loss.item()):
+            raise ValueError("Encountered NaN loss")
+
         loss = loss / max(grad_accum_step_num, 1)
         average_meters["loss"].update(value=loss.item(), n=batch_size)
 
+        # --- Backprop
+        if use_amp:
+            scaled_loss = scaler.scale(loss)
+            if not isinstance(scaled_loss, torch.Tensor):
+                raise ValueError(
+                    f"Not Expected {scaled_loss = }, {type(scaled_loss) = }"
+                )
+            scaled_loss.backward()
+            # scaler.unscale_(optimizer)
+        else:
+            loss.backward()
+
         # --- Metrics
-        preds = output.preds.sigmoid().cpu().detach().numpy()
-        targets = output.targets.cpu().detach().numpy()
+        preds = output.preds.sigmoid().cpu().detach().numpy() > thr
+        targets = output.raw_targets.cpu().detach().numpy()
         train_metrics = metrics_fn(preds=preds, target=targets)
         train_metrics["loss"] = loss.item()
         for name, metric_value in train_metrics.items():
             average_meters[name].update(value=metric_value, n=batch_size)
-
-        # --- Backprop
-        scaled_loss = scaler.scale(loss)
-        if not isinstance(scaled_loss, torch.Tensor):
-            raise ValueError(f"Not Expected {scaled_loss = }, {type(scaled_loss) = }")
-
-        scaled_loss.backward()
 
         if (step + 1) % grad_accum_step_num == 0:
             # Since not change gradient direction, usually use thie function
             clip_grad_norm_(model.parameters(), max_grad_norm)
             # clip_grad_value_(model.parameters(), max_grad_norm)  #
 
-            # update parameters
-            scaler.step(optimizer)
-            scaler.update()
+            # --- Update parameters
+            if use_amp:
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                optimizer.step()
 
             if schedule_per_step:
-                scheduler_step(scheduler, loss=loss.item())
+                scheduler_step(scheduler, loss=loss.item(), epoch=epoch)  # type: ignore
 
-            def _make_logging_assets(name: str) -> dict[str, float]:
-                return {
-                    f"train/fold{fold}_{name}_avg": average_meters[name].avg,
-                    # f"train/fold{fold}_{name}_std": average_meters[name].std,
-                }
+            # --- Logging
+            if isinstance(scheduler, CosineLRScheduler):
+                log_assets = {"lr": scheduler._get_lr(epoch)[-1]}
+            else:
+                log_assets = {"lr": scheduler.get_last_lr()[0]}
+            for metric_name in metric_names:
+                key = f"train/fold{fold}_{metric_name}_avg"
+                log_assets[key] = average_meters[metric_name].avg
 
-            log_assets = list(map(_make_logging_assets, metric_names))
-            log_assets = my_utils.flatten_dict(log_assets)
-            learning_rate = optimizer.param_groups[0]["lr"]
-            log_assets.update({"lr": learning_rate})
             wandb.log(log_assets)
-            log_assets.update({"epoch": epoch})
-            pbar.set_postfix(log_assets)
+            pbar.set_postfix({"epoch": epoch, **log_assets})
 
     train_assets = TrainAssets(
         loss=average_meters["loss"].avg,
+        dice=average_meters["dice"].avg,
         cls_acc=average_meters["cls_acc"].avg if aux_params is not None else None,
         duration=int(time.time() - start),
     )
@@ -820,9 +831,8 @@ def valid_one_epoch(
     aux_params: AuxParams | None = None,
     cls_loss_fn: LossFn | None = None,
     debug: bool = False,
-    metric_names: list[str] = ["loss", "dice"],
-    forward_fn: ForwardFn = default_segmentation_forward_fn,
-    postprocess_fn: PostProcessFn = default_postprocess_fn,
+    metric_names: list[str] = ["loss"],
+    thr: float = 0.5,
 ) -> ValidAssets:
     """Validate one epoch
 
@@ -864,25 +874,23 @@ def valid_one_epoch(
     average_meters = init_average_meters(metric_names=metric_names)
 
     start = time.time()
-
     model = make_tta_model(model)
 
     # for global dice
     tp = 0
     positive_preds = 0
     positive_targets = 0
+    dice_sum = 0
+    batch_size_sum = 0
 
     pbar = tqdm(
         enumerate(valid_loader),
         total=len(valid_loader),
         smoothing=0,
         dynamic_ncols=True,
-        desc="Valid Per Epoch",
+        desc="Valid",
     )
     for step, batch in pbar:
-        if isinstance(batch, tuple):
-            batch = {"image": batch[0], "target": batch[1]}
-
         batch = send_tensor_to_device(batch=batch, device=device)
         batch_size = batch["target"].size(0)
 
@@ -895,29 +903,22 @@ def valid_one_epoch(
         ):
             # output = forward_fn(model=model, batch=batch)
             outs = model(image)
-        # logits = outs["logits"].squeeze(1)
+
+        # preds: (B, 256, 256)
         preds = outs["preds"].squeeze(1)
         if preds.shape[1:] != (256, 256):
             raise ValueError(f"{preds.shape = }")
 
-        if target.shape[1:] != (256, 256):
-            resized_target = F.interpolate(
-                target.unsqueeze(1).float(), size=(256, 256), mode="bilinear"
-            ).squeeze(1)
-        else:
-            resized_target = target.squeeze(1).float()
-
-        output = ForwardOutputs(preds=preds, targets=resized_target)
-
+        output = ForwardOutputs(preds=preds, targets=target)
         loss = loss_fn(output.preds, output.targets)
 
         # --- For Aux Heads
-        # cls: (N, 1)
         if (
             aux_params is not None
             and output.cls_preds is not None
             and cls_loss_fn is not None
         ):
+            # cls: (N, 1)
             cls_target = _make_cls_label(output.targets).to(device, non_blocking=True)
             cls_loss = aux_params.cls_weight * cls_loss_fn(output.cls_preds, cls_target)
             loss += cls_loss
@@ -931,21 +932,23 @@ def valid_one_epoch(
                 }
             )
 
-        preds = output.preds.sigmoid().cpu().detach().numpy()
+        preds = output.preds.sigmoid().cpu().detach().numpy() > thr
         targets = output.targets.cpu().detach().numpy()
         valid_metrics = metrics_fn(preds=preds, target=targets)
 
-        # Comupte global dice
+        # --- Comupte global dice
         tp += (preds * targets).sum()
         positive_preds += preds.sum()
         positive_targets += targets.sum()
+        dice_sum += valid_metrics.pop("dice") * batch_size
+        batch_size_sum += batch_size
 
         # --- Logging loss
         if not my_utils.is_nan(loss.item()):
             average_meters["loss"].update(value=loss.item(), n=batch_size)
-            valid_metrics.update({"loss": loss.item()})
+            valid_metrics["loss"] = loss.item()
 
-        # Logging metrics
+        # --- Logging metrics
         for name, metric_value in valid_metrics.items():
             average_meters[name].update(value=metric_value, n=batch_size)
 
@@ -960,22 +963,30 @@ def valid_one_epoch(
         if debug:
             nd_imgs = batch["image"].cpu().detach().permute(0, 2, 3, 1).numpy()
             nd_masks = batch["target"].cpu().detach().numpy()
-            nd_preds = output.preds.sigmoid().cpu().detach().numpy()
+            nd_preds = output.preds.sigmoid().cpu().detach().numpy() > thr
             for i in range(batch_size):
                 nd_img = nd_imgs[i]
                 nd_mask = nd_masks[i]
-                fig, ax = my_utils.plot_a_label_on_a_image(nd_img, nd_mask)
-                ax.imshow(nd_preds, alpha=0.5, cmap="Reds", label="preds")
-                ax.legend()
+                fig, _ = my_utils.plot_a_label_on_a_image(nd_img, nd_mask)
                 fig.savefig(f"./debug/step{step}_{i}_mask.png")
+                fig, _ = my_utils.plot_a_label_on_a_image(
+                    nd_img, nd_preds.astype(np.uint8)
+                )
+                fig.savefig(f"./debug/step{step}_{i}_pred.png")
 
     global_dice = 2 * tp / (positive_preds + positive_targets + 1e-6)
-    wandb.log({f"valid/fold{fold}_global_dice": global_dice})
+    batch_avg_dice = dice_sum / batch_size_sum
+    wandb.log(
+        {
+            f"valid/fold{fold}_global_dice": global_dice,
+            f"valid/fold{fold}_dice_avg": batch_avg_dice,
+        }
+    )
     logger.info(f"global dice: {global_dice}")
 
     valid_assets = ValidAssets(
         loss=average_meters["loss"].avg,
-        dice=average_meters["dice"].avg,
+        dice=batch_avg_dice,
         global_dice=global_dice,
         duration=int(time.time() - start),
     )

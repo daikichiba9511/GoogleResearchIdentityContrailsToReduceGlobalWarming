@@ -207,6 +207,92 @@ def get_loaders_v2(
     return train_loader, valid_loader
 
 
+def builded_model(config: Config, disable_compile: bool, fold: int) -> torch.nn.Module:
+    logger.info(f"{config.arch =}")
+
+    if config.arch == "UNETR_Segformer":
+        model = UNETR_Segformer(img_size=config.image_size)
+    elif config.arch == "CustomedUnet":
+        model = CustomedUnet(
+            name=config.encoder_name,
+            pretrained=config.encoder_weight is not None,
+            tta_type=None,
+        )
+    else:
+        model = ContrailsModel(
+            encoder_name=config.encoder_name,
+            encoder_weight=config.encoder_weight,
+            aux_params=config.aux_params,
+            arch=config.arch,
+        )
+
+    if config.resume_training:
+        resume_path = config.resume_path.format(fold=fold)
+        logger.info(
+            f"Resume training from {resume_path} with {config.positive_only = }"
+        )
+        state = torch.load(resume_path)
+        model.load_state_dict(state)
+
+    if disable_compile:
+        return model
+    return torch.compile(model)  # type: ignore
+
+
+def _init_scheduler(
+    config: Config,
+    optimizer: torch.optim.Optimizer,
+    schedule_per_step: bool,
+    train_loader: DataLoader,
+) -> torch.optim.lr_scheduler.LRScheduler:
+    # if SchedulerType(config.scheduler_type) == SchedulerType.CosineWithWarmup:
+    #     step_num = (
+    #         len(train_loader) // config.train_batch_size if schedule_per_step else 1
+    #     )
+    #     total_step_num = math.ceil(step_num * max(config.epochs, 1))
+    #     warmup_step_num = (
+    #         # math.ceil((total_step_num * 2) / 100)
+    #         int(config.scheduler_params["warmup_ratio"] * total_step_num)
+    #         if config.scheduler_params["warmup_ratio"]
+    #         else 0
+    #     )
+    #     logger.info(f"{total_step_num = }, {warmup_step_num = }")
+    #     scheduler_params: dict[str, int | float] = {
+    #         "num_warmup_steps": warmup_step_num,
+    #         "num_training_steps": total_step_num,
+    #     }
+    # else:
+    #     scheduler_params = config.scheduler_params
+    scheduler_params = config.scheduler_params
+    scheduer = get_scheduler(
+        scheduler_type=config.scheduler_type,
+        scheduler_params=scheduler_params,
+        optimizer=optimizer,
+    )
+    return scheduer
+
+
+def setuped_run(config: Config, exp_ver: str, fold: int, uid: str):
+    run = wandb.init(
+        project="contrails",
+        name=f"{exp_ver}-{uid}-fold{fold}-{config.arch}-{config.encoder_name}",
+        notes=config.description,
+        config=config.__dict__,
+        group=f"{exp_ver.split('_')[0]}",
+        tags=[
+            exp_ver.split("_")[0],
+            f"fold{fold}",
+            config.arch,
+            config.encoder_name,
+        ],
+        settings=wandb.Settings(code_dir="./src"),
+    )
+    if not isinstance(run, wandb.sdk.wandb_run.Run):  # type: ignore
+        raise ValueError("wandb.init() returns unexpected type")
+
+    return run
+
+
 def main(
     exp_ver: str,
     all: bool = False,
@@ -235,114 +321,34 @@ def main(
     train_fold = list(range(config.n_splits)) if all else [0]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     use_amp = config.use_amp
+    schedule_per_step = False
 
     for fold in range(config.n_splits):
         if fold not in train_fold:
             continue
-        run = wandb.init(
-            project="contrails",
-            name=f"{exp_ver}-{uid}-fold{fold}-{config.arch}-{config.encoder_name}",
-            notes=config.description,
-            config=config.__dict__,
-            group=f"{exp_ver.split('_')[0]}",
-            tags=[
-                exp_ver.split("_")[0],
-                f"fold{fold}",
-                config.arch,
-                config.encoder_name,
-            ],
-        )
         seed_everything(config.seed)
         logger.info(f"## Fold: {fold} ##")
-
+        run = setuped_run(config, exp_ver, fold, uid)
         train_loader, valid_loader = get_loaders_v2(
-            config,
-            debug=debug,
-            fold=fold,
-            positive_only=config.positive_only,
-            use_soft_label=config.use_soft_label,
+            config, debug, fold, config.positive_only, config.use_soft_label
         )
-        # train_loader, valid_loader = get_loaders(
-        #     config,
-        #     remake_df=remake_df,
-        #     debug=debug,
-        #     fold=fold,
-        #     positive_only=config.positive_only,
-        # )
-        logger.info(f"{config.arch =}")
-        model: torch.nn.Module
-        if config.arch == "UNETR_Segformer":
-            model = UNETR_Segformer(img_size=config.image_size)
-        elif config.arch == "CustomedUnet":
-            model = CustomedUnet(
-                name=config.encoder_name,
-                pretrained=config.encoder_weight is not None,
-                tta_type=None,
-            )
-        else:
-            model = ContrailsModel(
-                encoder_name=config.encoder_name,
-                encoder_weight=config.encoder_weight,
-                aux_params=config.aux_params,
-                arch=config.arch,
-            )
-
-        if not disable_compile:
-            model = torch.compile(model)  # type: ignore
-
-        model = model.to(device=device)
-        if config.resume_training:
-            resume_path = config.resume_path.format(fold=fold)
-            logger.info(
-                f"Resume training from {resume_path} with {config.positive_only = }"
-            )
-            state = torch.load(resume_path)
-            model.load_state_dict(state)
-
-        optimizer = get_optimizer(
-            optimizer_type=config.optimizer_type,
-            optimizer_params=config.optimizer_params,
-            model=model,
+        model = builded_model(config, disable_compile, fold).to(
+            device=device, non_blocking=True
         )
-
-        schedule_per_step = False
-        if SchedulerType(config.scheduler_type) == SchedulerType.CosineWithWarmup:
-            step_num = (
-                len(train_loader) // config.train_batch_size if schedule_per_step else 1
-            )
-            total_step_num = math.ceil(step_num * max(config.epochs, 1))
-            warmup_step_num = (
-                # math.ceil((total_step_num * 2) / 100)
-                int(config.scheduler_params["warmup_ratio"] * total_step_num)
-                if config.scheduler_params["warmup_ratio"]
-                else 0
-            )
-            logger.info(f"{total_step_num = }, {warmup_step_num = }")
-            scheduler_params: dict[str, int | float] = {
-                "num_warmup_steps": warmup_step_num,
-                "num_training_steps": total_step_num,
-            }
-        else:
-            scheduler_params = config.scheduler_params
-        scheduer = get_scheduler(
-            scheduler_type=config.scheduler_type,
-            scheduler_params=scheduler_params,
-            optimizer=optimizer,
-        )
+        optimizer = get_optimizer(config.optimizer_type, config.optimizer_params, model)
+        scheduer = _init_scheduler(config, optimizer, schedule_per_step, train_loader)
         loss = get_loss(loss_type=config.loss_type, loss_params=config.loss_params)
         cls_loss = torch.nn.BCEWithLogitsLoss()
         scaler = GradScaler(enabled=use_amp)
         earlystopping = EarlyStopping(
-            patience=config.patience,
-            save_dir=config.output_dir,
-            verbose=True,
-            logger_fn=logger.info,
+            config.patience, True, logger.info, config.output_dir
         )
         aux_params = (
             AuxParams(cls_weight=config.cls_weight) if config.cls_weight else None
         )
         aug_params = AugParams(**config.aug_params) if config.aug_params else None
 
+        assets = []
         for epoch in range(config.epochs):
             seed_everything(config.seed)
             train_assets = train_one_epoch(
@@ -375,38 +381,39 @@ def main(
                 use_amp=use_amp,
                 debug=debug,
             )
-            scheduler_step(scheduer, valid_assets.loss)
+
+            if not schedule_per_step:
+                scheduler_step(scheduer, valid_assets.loss, epoch)
 
             logging_assets = {
                 "train/avg_loss": train_assets.loss,
-                # "train/avg_cls_acc": train_assets.cls_acc,
                 "train/duration": train_assets.duration,
+                "train/avg_dice": train_assets.dice,
                 "valid/avg_loss": valid_assets.loss,
                 "valid/avg_dice": valid_assets.dice,
                 "valid/duration": valid_assets.duration,
+                "valid/global_dice": valid_assets.global_dice,
             }
+            assets.append(logging_assets)
             logger.info(f"{epoch}: \n{pprint.pformat(logging_assets)}")
             wandb.log(logging_assets)
 
             save_path = (
                 f"{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
             )
-            earlystopping(valid_assets.dice, model, save_path)
+            earlystopping(valid_assets.global_dice, model, save_path)
             if earlystopping.early_stop:
                 logger.info("Early stopping")
                 break
 
         save_path = (
-            f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
+            config.output_dir
+            / f"last-{config.expname}-{config.arch}-{config.encoder_name}-fold{fold}.pth"
         )
-        earlystopping.save_checkpoint(
-            float("inf"), model, config.output_dir / save_path
-        )
+        earlystopping.save_checkpoint(assets[-1]["valid/global_dice"], model, save_path)
         logger.info(f"## Fold: {fold} End ##")
-
         if run is not None:
             run.finish()
-
         gc.collect()
         torch.cuda.empty_cache()
     logger.info(f"## All End. Log -> {log_file_path} ##")

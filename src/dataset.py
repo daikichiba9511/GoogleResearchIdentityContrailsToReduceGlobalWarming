@@ -280,6 +280,7 @@ class ContrailsDatasetV2(Dataset):
         use_soft_label: bool = True,
         mask_paths: Sequence[Path] | None = None,
         avg_mask_paths: Sequence[Path] | None = None,
+        img_size: tuple[int, int] = (512, 512),
     ) -> None:
         if phase not in ["train", "val", "test"]:
             raise ValueError(f"phase must be one of train, val, test, but got {phase}")
@@ -342,6 +343,8 @@ class ContrailsDatasetV2(Dataset):
                 if target is None:
                     raise ValueError("target must not be None")
 
+                image = T.Resize(512, antialias=True)(image)  # type: ignore
+
                 return {
                     "image": image,
                     "pixel_mask": torch.tensor(pixel_mask),
@@ -365,6 +368,7 @@ class ContrailsDatasetV2(Dataset):
                 image, target = self._transform(raw_image, pixel_mask)
                 if target is None:
                     raise ValueError("target must not be None")
+                image = T.Resize(512, antialias=True)(image)  # type: ignore
                 return {"image": image, "target": target}
 
             case "test":
@@ -383,6 +387,7 @@ class ContrailsDatasetV2(Dataset):
                     .astype(np.float32)
                 )
                 image, _ = self._transform(raw_image)
+                image = T.Resize(512, antialias=True)(image)  # type: ignore
                 return {"image": image}
 
             case _:

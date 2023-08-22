@@ -3,7 +3,7 @@ from typing import Any, Literal, TypeAlias
 
 import torch.nn as nn
 import torch.optim as optim
-from transformers import get_cosine_schedule_with_warmup
+from timm.scheduler import CosineLRScheduler
 from typing_extensions import assert_never
 
 __all__ = [
@@ -31,16 +31,14 @@ def get_scheduler(
     scheduler_type = SchedulerType(scheduler_type)
     match scheduler_type:
         case SchedulerType.CosineWithWarmup:
-            scheduler = get_cosine_schedule_with_warmup(
-                optimizer=optimizer, **scheduler_params
-            )
-            return scheduler
+            scheduler = CosineLRScheduler(optimizer=optimizer, **scheduler_params)
+            return scheduler  # type: ignore
         case SchedulerType.ReduceOnPlateau:
             scheduler = optim.lr_scheduler.ReduceLROnPlateau(
                 optimizer=optimizer, **scheduler_params
             )
 
-            return scheduler
+            return scheduler  # type: ignore
         case SchedulerType.CosineAnnealingLR:
             scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 optimizer=optimizer, **scheduler_params

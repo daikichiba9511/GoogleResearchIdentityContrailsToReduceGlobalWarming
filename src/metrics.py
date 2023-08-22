@@ -6,9 +6,11 @@ __all__ = ["calc_metrics"]
 
 
 def _dice(pred: np.ndarray, mask: np.ndarray, eps: float = 1e-7) -> float:
+    pred = pred.astype(np.float32).flatten()
+    mask = mask.astype(np.float32).flatten()
     intersection = (pred * mask).sum()
     union = pred.sum() + mask.sum()
-    dice = np.mean((2.0 * intersection) / (union + eps)).item()
+    dice = (2.0 * intersection + eps) / (union + eps)
     return dice
 
 
@@ -26,20 +28,18 @@ def dice_coef(
 def calc_metrics(
     preds: np.ndarray | torch.Tensor, target: np.ndarray | torch.Tensor
 ) -> dict[str, float]:
-    if not isinstance(preds, torch.Tensor):
-        preds = torch.from_numpy(preds).float()
-    if not isinstance(target, torch.Tensor):
-        target = torch.from_numpy(target)
+    # if not isinstance(preds, torch.Tensor):
+    #     preds = torch.from_numpy(preds).float()
+    # if not isinstance(target, torch.Tensor):
+    #     target = torch.from_numpy(target).float()
 
-    dice = smp.losses.DiceLoss(mode="binary", from_logits=True)
-    dice_coef_value = dice(preds, target).item()
-    # dices = {}
-    # for thr in np.arange(0.3, 0.85, 0.5):
-    #     dice_coef_value = dice_coef(preds, target, thr=thr, eps=1e-5)
-    #     dices[f"dice_{thr}"] = dice_coef_value
+    # dice = smp.losses.DiceLoss(mode="binary", from_logits=True)
+    # dice_coef_value = dice(preds, target).item()
+
+    dice_coef_value = _dice(preds, target)  # type: ignore
 
     metrics = {
-        "dice": 1 - dice_coef_value,
+        "dice": dice_coef_value,
         # **dices,
     }
     return metrics

@@ -377,14 +377,11 @@ class ContrailsModel(nn.Module):
         encoder_weight: str | None = None,
         aux_params: dict[str, Any] | None = None,
         arch: str = "Unet",
-        trainable_downsampling: bool = True,
+        trainable_downsampling: bool = False,
+        thin_downsampling: bool = False,
     ) -> None:
         super().__init__()
-        if (
-            encoder_name.startswith("tu-convnext")
-            # or encoder_name.startswith("tu-maxvit")
-            or encoder_name.startswith("tu-pvt")
-        ):
+        if encoder_name.startswith("tu-convnext") or encoder_name.startswith("tu-pvt"):
             encoder_depth = 4
         else:
             encoder_depth = 5
@@ -451,7 +448,6 @@ class ContrailsModel(nn.Module):
             # IN : torch.nn.Conv2d(1,1,kernel_size=(5,5),stride=2,padding=2)(torch.randn(3,1,512,512)).shape
             # OUT: torch.Size([3, 1, 256, 256])
             # padding=2で微妙に足りない分を補う
-            thin_downsampling = False
             if thin_downsampling:
                 self.downsample2x = nn.Conv2d(1, 1, kernel_size=5, stride=2, padding=2)
             else:
@@ -472,23 +468,11 @@ class ContrailsModel(nn.Module):
     def forward(self, images: torch.Tensor) -> dict[str, torch.Tensor]:
         outputs = self.model(images)
         if isinstance(outputs, tuple):
-            logits, cls_logits = outputs
-            cls_logits = cls_logits.reshape(-1)
+            logits, cls_logits = outputs[0], outputs[1].reshape(-1)
         else:
-            logits = outputs
-            cls_logits = None
+            logits, cls_logits = outputs, None
 
-        if logits.shape[-1] != 256:
-            # preds = nn.functional.interpolate(
-            #     # logits, size=(256, 256), mode="bicubic", align_corners=False
-            #     logits,
-            #     size=(256, 256),
-            #     mode="bilinear",
-            #     align_corners=False,
-            # )
-            preds = self.downsample2x(logits)
-        else:
-            preds = logits
+        preds = self.downsample2x(logits) if logits.shape[-1] != 256 else logits
 
         # logist: (batch_size, height, width)
         outputs = {
