@@ -159,8 +159,8 @@ config = {
     },
     "train_aug_list": [
         A.Resize(height=IMG_SIZE, width=IMG_SIZE, p=1),
-        # A.RandomRotate90(p=1.0),
-        # A.HorizontalFlip(p=0.2),
+        A.RandomRotate90(p=0.5),
+        A.HorizontalFlip(p=0.2),
         A.Normalize(max_pixel_value=1.0),
         ToTensorV2(),
     ],

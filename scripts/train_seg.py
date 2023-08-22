@@ -379,7 +379,7 @@ def main(
 
             logging_assets = {
                 "train/avg_loss": train_assets.loss,
-                "train/avg_cls_acc": train_assets.cls_acc,
+                # "train/avg_cls_acc": train_assets.cls_acc,
                 "train/duration": train_assets.duration,
                 "valid/avg_loss": valid_assets.loss,
                 "valid/avg_dice": valid_assets.dice,
