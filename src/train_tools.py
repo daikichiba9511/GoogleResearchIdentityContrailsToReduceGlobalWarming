@@ -901,6 +901,9 @@ def valid_one_epoch(
             outs = model(image)
         # logits = outs["logits"].squeeze(1)
         preds = outs["preds"].squeeze(1)
+        if preds.shape[1:] != (256, 256):
+            raise ValueError(f"{preds.shape = }")
+
         if target.shape[1:] != (256, 256):
             resized_target = F.interpolate(
                 target.unsqueeze(1).float(), size=(256, 256), mode="bilinear"

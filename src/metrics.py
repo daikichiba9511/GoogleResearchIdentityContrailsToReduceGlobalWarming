@@ -7,11 +7,9 @@ __all__ = ["calc_metrics"]
 
 def _dice(pred: np.ndarray, mask: np.ndarray, eps: float = 1e-7) -> float:
     intersection = (pred * mask).sum()
-    pred_sum = pred.sum()
-    mask_sum = mask.sum()
-    dice = (2.0 * intersection) / (pred_sum + mask_sum + eps)
-    dice = np.mean(dice)
-    return dice.item()
+    union = pred.sum() + mask.sum()
+    dice = np.mean((2.0 * intersection) / (union + eps)).item()
+    return dice
 
 
 def dice_coef(
@@ -34,14 +32,14 @@ def calc_metrics(
         target = torch.from_numpy(target)
 
     dice = smp.losses.DiceLoss(mode="binary", from_logits=True)
-    dice_coef_value = dice(preds, target)
+    dice_coef_value = dice(preds, target).item()
     # dices = {}
     # for thr in np.arange(0.3, 0.85, 0.5):
     #     dice_coef_value = dice_coef(preds, target, thr=thr, eps=1e-5)
     #     dices[f"dice_{thr}"] = dice_coef_value
 
     metrics = {
-        "dice": 1 - dice_coef_value.item(),
+        "dice": 1 - dice_coef_value,
         # **dices,
     }
     return metrics
@@ -51,7 +49,6 @@ def _test_dice() -> None:
     pred = torch.randn((3, 1, 256, 256)).numpy()
     mask = torch.randint(0, 2, size=(3, 1, 256, 256)).numpy()
     print(pred.shape, mask.shape)
-    dice = smp.losses.DiceLoss(mode="binary", from_logits=True)
     metrics = calc_metrics(pred, mask)
     print(metrics)
     print("Run test_dice() successfully")
