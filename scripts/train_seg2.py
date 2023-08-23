@@ -17,9 +17,10 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm.auto import tqdm
 
 import wandb
-from configs.factory import Config
+from configs.factory import Config, made_config
 from src.dataset import fixed_offset_img
 from src.losses import get_loss
+from src.metrics import GlobalDice, MetricsFns
 from src.models import builded_model
 from src.optimizer import get_optimizer
 from src.scheduler import get_scheduler
@@ -44,54 +45,6 @@ class Metrics:
     batch_avg_acc: float
     loss: float
     duration: float
-
-
-class GlobalDice:
-    def __init__(self, eps: float = 1e-8) -> None:
-        self._tp = 0
-        self._preds_sum = 0
-        self._mask_sum = 0
-        self._eps = eps
-
-    def update(self, preds: torch.Tensor, mask: torch.Tensor) -> None:
-        self._tp += (preds * mask).sum()
-        self._preds_sum += preds.sum()
-        self._mask_sum += mask.sum()
-
-    @property
-    def value(self) -> float:
-        """Return global dice score
-
-        NOTE:
-            2 * Intersection / Union
-            = 2 * (TP + eps) / (preds_sum + mask_sum + eps)
-
-            where:
-                - TP: True Positive
-
-        Returns:
-            float: global dice score
-        """
-        return (2 * self._tp + self._eps) / (
-            self._preds_sum + self._mask_sum + self._eps
-        )
-
-
-class MetricsFns:
-    @staticmethod
-    def dice(preds: torch.Tensor, mask: torch.Tensor, eps: float = 1e-4) -> float:
-        flatten_preds = preds.view(-1)
-        flatten_mask = mask.view(-1)
-        intersection = (flatten_preds * flatten_mask).sum()
-        union = flatten_preds.sum() + flatten_mask.sum()
-        dice_value = (2 * intersection + eps) / (union + eps)
-        return dice_value.item()
-
-    @classmethod
-    def calc_metrics(cls, preds: torch.Tensor, mask: torch.Tensor) -> dict[str, float]:
-        dice = cls.dice(preds, mask)
-        accs = (preds == mask).float().mean().item()
-        return {"dice": dice, "accs": accs}
 
 
 class ContrailDatasetV3(Dataset):
@@ -271,13 +224,6 @@ def _builded_loaders(
     return dl_train, dl_valid
 
 
-def _init_config(config: str, debug: bool) -> Config:
-    _config = importlib.import_module(f"configs.{config}").config
-    if debug:
-        _config["epochs"] = 2
-    return Config(**_config)
-
-
 def validated(
     model: nn.Module,
     loader: DataLoader,
@@ -368,7 +314,7 @@ def _fit_one_fold(
             # train with soft label
             image = batch["image"].to(device, non_blocking=True)
             avg_mask = batch["avg_mask"].to(device, non_blocking=True)
-            target = batch["target"].to(device, non_blocking=True)
+            # target = batch["target"].to(device, non_blocking=True)
             bs = image.size(0)
 
             with torch.cuda.amp.autocast_mode.autocast(
@@ -406,7 +352,6 @@ def _fit_one_fold(
 
                 optimizer.zero_grad(set_to_none=True)
             # --- End of train loop
-
         # --- Validation
         metrics = validated(
             model,
@@ -469,7 +414,7 @@ def main(
     disable_compile: bool = False,
     train_all: bool = False,
 ) -> None:
-    config = _init_config(config_ver, debug)
+    config = made_config(config_ver, debug)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     uid = str(uuid.uuid4())[:8]

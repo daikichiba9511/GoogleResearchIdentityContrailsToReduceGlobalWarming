@@ -8,10 +8,12 @@ import torch.nn as nn
 from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader
 
+from configs.factory import made_config
+from scripts.train_seg2 import ContrailDatasetV3
 from src.dataset import ContrailsDatasetV2
-from src.metrics import calc_metrics
-from src.models import ContrailsModel, CustomedUnet
-from src.train_tools import init_average_meters, seed_everything
+from src.metrics import GlobalDice, MetricsFns
+from src.models import ContrailsModel, CustomedUnet, builded_model
+from src.train_tools import AverageMeter, seed_everything
 from src.utils import add_file_handler, get_stream_logger
 
 logger = get_stream_logger(20)
@@ -19,11 +21,13 @@ logger = get_stream_logger(20)
 
 class EnsembleModel(nn.Module):
     def __init__(
-        self, models: list[ContrailsModel], weights: list[float] | None = None
+        self,
+        models: list[ContrailsModel | CustomedUnet],
+        weights: list[float] | None = None,
     ):
         super().__init__()
         self._models = models
-        if weights is None:
+        if weights is None or len(weights) == 0:
             self._weights = [1.0 / len(models)] * len(models)
         else:
             self._weights = weights
@@ -37,7 +41,20 @@ class EnsembleModel(nn.Module):
 
 
 def build_ensemble_model() -> EnsembleModel:
-    ...
+    models = []
+    weights = []
+
+    # config 37_1
+    _model = builded_model(
+        made_config("unet_v1", debug=False), disable_compile=False, fold=0
+    )
+    _model.load_state_dict(torch.load("./output/"))
+    models.append(_model)
+    weights.append(0.5)
+
+    assert len(models) == len(weights)
+    ensemble_model = EnsembleModel(models=models, weights=weights)
+    return ensemble_model
 
 
 def main(debug: bool = False, batch_size: int = 32) -> None:
@@ -50,18 +67,17 @@ def main(debug: bool = False, batch_size: int = 32) -> None:
     seed_everything(42)
     add_file_handler(logger, logging_fp)
 
-    df = pd.read_csv("./input/prepared_np_imgs_weight1/metadata.csv")
-    valid_df = df.query("not is_train").reset_index(drop=True)
+    image_paths = list(
+        Path(
+            "./input/google-research-identify-contrails-reduce-global-warming/validation/"
+        ).glob("*")
+    )
     if debug:
-        valid_df = valid_df[:100]
-    image_paths = valid_df["image_path"].to_numpy().tolist()
-    mask_paths = valid_df["mask_path"].to_numpy().tolist()
-    aug_fn = A.Compose([A.Resize(height=512, width=512, p=1), ToTensorV2()])
-    valid_dataset = ContrailsDatasetV2(
-        img_paths=image_paths,
-        transform_fn=aug_fn,
-        phase="val",
-        mask_paths=mask_paths,
+        image_paths = image_paths[:100]
+    record_ids = [p.stem for p in image_paths]
+    aug_fn = A.Compose([ToTensorV2()])
+    valid_dataset = ContrailDatasetV3(
+        image_paths, record_ids, "valid", aug_fn, fix_offset=True
     )
     data_loader = DataLoader(
         dataset=valid_dataset,
@@ -72,11 +88,10 @@ def main(debug: bool = False, batch_size: int = 32) -> None:
         drop_last=False,
     )
     ensemble_model = build_ensemble_model()
-    average_meters = init_average_meters(["dice"])
+    dices = AverageMeter("dice")
+    accs = AverageMeter("accs")
+    global_dice = GlobalDice()
 
-    tp = 0
-    pred_sum = 0
-    mask_sum = 0
     for i, batch in enumerate(data_loader):
         image, mask = batch["image"], batch["mask"]
         with torch.inference_mode():
@@ -85,23 +100,23 @@ def main(debug: bool = False, batch_size: int = 32) -> None:
         preds = preds.detach().cpu().numpy()
         mask = mask.detach().cpu().numpy()
 
-        metrics = calc_metrics(preds, mask)
-        for k, v in metrics.items():
-            average_meters[k].update(v, batch_size)
+        metrics = MetricsFns.calc_metrics(preds, mask)
+        dices.update(metrics["dice"])
+        accs.update(metrics["accs"])
+        global_dice.update(preds, mask)
 
-        tp += (preds * mask).sum()
-        pred_sum += preds.sum()
-        mask_sum += mask.sum()
+    logger.info(
+        f"""
+    Metrics
+    ---------------------------
 
-    global_dice = (2.0 * tp + 1e-7) / (pred_sum + mask_sum + 1e-7)
+    model_num   : {len(ensemble_model._models)}
 
-    report = f"""
-    Global dice: {global_dice}
-
-    dice: {average_meters['dice'].avg}
-
+    global dice : {global_dice.value}
+    dice        : {dices.avg}
+    acc         : {accs.avg}
     """
-    logger.info(report)
+    )
     logger.info(" === cv finished === ")
 
 

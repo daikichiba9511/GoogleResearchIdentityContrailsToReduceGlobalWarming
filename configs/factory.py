@@ -92,6 +92,13 @@ class Config:
     threshold: float
 
 
+def made_config(config: str, debug: bool) -> Config:
+    _config = importlib.import_module(f"configs.{config}").config
+    if debug:
+        _config["epochs"] = 2
+    return Config(**_config)
+
+
 def init_config(config_cls: type[T], config_path: str, debug: bool = False) -> T:
     """Load config from config_path and initialize config_cls
 
