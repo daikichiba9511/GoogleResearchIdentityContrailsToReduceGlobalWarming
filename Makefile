@@ -35,5 +35,15 @@ test: ## run test with pytest
 clean:
 	rm -rf ./output/* wandb/*
 
+train: ## train model
+	rye run python scripts/train_seg2.py \
+		--config $(CONFIG) \
+
+train_debug: ## debug of train_seg2.py
+	rye run python scripts/train_seg2.py \
+		--config $(CONFIG) \
+		--debug \
+		--disable_compile
+
 help:  ## Show all of tasks
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'

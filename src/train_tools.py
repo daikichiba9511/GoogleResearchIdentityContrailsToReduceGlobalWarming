@@ -329,6 +329,7 @@ def scheduler_step(
     scheduler: optim.lr_scheduler.LRScheduler, loss: float, epoch: int | None = None
 ) -> None:
     if loss in [float("inf"), float("-inf"), None, torch.nan, float("nan")]:
+        logger.info(f"Encounted invalid loss value. Skip scheduler step with {loss = }")
         return
 
     if epoch is None:
@@ -698,8 +699,12 @@ def train_one_epoch(
             outs = model(image)
 
         if target.shape[1:] != (512, 512):
+            # model="bilinear" and align_corners=False is the same with openCV
             resized_target = F.interpolate(
-                target.unsqueeze(1).float(), size=(512, 512), mode="bilinear"
+                target.unsqueeze(1).float(),
+                size=(512, 512),
+                mode="bilinear",
+                align_corners=False,
             ).squeeze(1)
         else:
             resized_target = target.squeeze(1).float()

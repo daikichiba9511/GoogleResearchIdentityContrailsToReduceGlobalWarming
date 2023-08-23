@@ -225,6 +225,9 @@ def fixed_offset_img(
 ) -> np.ndarray:
     """fix offset of an image which is caused by polygon2mask
 
+    Args:
+        img: shape = (256, 256, 3)
+
     NOTE:
         - Affine transformation
 
@@ -499,9 +502,9 @@ if __name__ == "__main__":
     from albumentations.pytorch import ToTensorV2
 
     img = np.load(Path("./input/prepared_np_imgs_weight1/195731008142151/image.npy"))
-    print(img.shape)
+    print(f"{img.shape = }")
     fixed_img = fixed_offset_img(img)
-    print(fixed_img.shape)
+    print(f"{fixed_img.shape = }")
 
     img = (
         T.Resize(512, antialias=True)(ToTensorV2()(image=img)["image"])  # type: ignore

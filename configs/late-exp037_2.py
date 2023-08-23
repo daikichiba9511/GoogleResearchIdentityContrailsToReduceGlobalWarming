@@ -19,10 +19,14 @@ copy from exp035_4
 
 # Purpose
 
-- encoder: tu-maxvit_tiny_tf_512 img_size={IMG_SIZE}
-- with_pseudo_label
+- encoder: tu-maxvit_tiny_tf_512
+
+- img_size={IMG_SIZE}
+
 - soft_bce
+
 - try to use soft label
+
 - lr=1e-4
 
 # Reference
@@ -37,8 +41,8 @@ config = {
     "seed": 42,
     # -- Model
     "arch": "Unet",
-    "encoder_name": "tu-maxvit_tiny_tf_512.in1k",
-    "encoder_weight": "imagenet",
+    "encoder_name": "tu-efficientnetv2_l",
+    "encoder_weight": None,
     "checkpoints": ["./output/exp009_8/exp009_8-UNet-timm-resnest26d-fold0.pth"],
     # -- Data
     "data_root_path": Path(
@@ -75,7 +79,7 @@ config = {
     "aux_params": None,
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 5e-4,
+        "lr": 1e-4,
         "weight_decay": 0.0,
         "eps": 1e-4,
     },
@@ -84,12 +88,12 @@ config = {
         "t_initial": 20,
         "lr_min": 1e-6,
         "warmup_prefix": True,
-        "warmup_t": 0,  # 10% of epochs
+        "warmup_t": 1,
         "warmup_lr_init": 1e-8,
     },
     "train_aug_list": [
-        A.RandomRotate90(p=1.0),
-        A.HorizontalFlip(p=0.5),
+        A.RandomRotate90(p=0.5),
+        A.HorizontalFlip(p=0.2),
         ToTensorV2(),
     ],
     "valid_aug_list": [

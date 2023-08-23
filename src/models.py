@@ -19,7 +19,41 @@ from transformers import (
     SegformerForSemanticSegmentation,
 )
 
+from configs.factory import Config
+
 logger = getLogger(__name__)
+
+
+def builded_model(config: Config, disable_compile: bool, fold: int) -> nn.Module:
+    logger.info(f"Model: {config.arch}-{config.encoder_name}")
+
+    if config.arch == "UNETR_Segformer":
+        model = UNETR_Segformer(img_size=config.image_size)
+    elif config.arch == "CustomedUnet":
+        model = CustomedUnet(
+            name=config.encoder_name,
+            pretrained=config.encoder_weight is not None,
+            tta_type=None,
+        )
+    else:
+        model = ContrailsModel(
+            encoder_name=config.encoder_name,
+            encoder_weight=config.encoder_weight,
+            aux_params=config.aux_params,
+            arch=config.arch,
+        )
+
+    if config.resume_training:
+        resume_path = config.resume_path.format(fold=fold)
+        logger.info(
+            f"Resume training from {resume_path} with {config.positive_only = }"
+        )
+        state = torch.load(resume_path)
+        model.load_state_dict(state)
+
+    if disable_compile:
+        return model
+    return torch.compile(model)  # type: ignore
 
 
 # TODO: まだ動かせてない
@@ -443,7 +477,8 @@ class ContrailsModel(nn.Module):
                 aux_params=aux_params,
             )
 
-        if trainable_downsampling:
+        self.trainable_downsampling = trainable_downsampling
+        if self.trainable_downsampling:
             # NOTE:
             # IN : torch.nn.Conv2d(1,1,kernel_size=(5,5),stride=2,padding=2)(torch.randn(3,1,512,512)).shape
             # OUT: torch.Size([3, 1, 256, 256])
@@ -472,7 +507,18 @@ class ContrailsModel(nn.Module):
         else:
             logits, cls_logits = outputs, None
 
-        preds = self.downsample2x(logits) if logits.shape[-1] != 256 else logits
+        if self.trainable_downsampling:
+            preds = self.downsample2x(logits) if logits.shape[-1] != 256 else logits
+        else:
+            preds = (
+                F.interpolate(
+                    logits,
+                    size=(256, 256),
+                    mode="bilinear",
+                )
+                if logits.shape[-1] != 256
+                else logits
+            )
 
         # logist: (batch_size, height, width)
         outputs = {
