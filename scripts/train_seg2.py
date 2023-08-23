@@ -255,8 +255,8 @@ def validated(
         losses.update(loss.item(), bs)
 
         # Metrics
-        metrics = metrics_fn((preds > thr).float(), target)
-        global_dice.update((preds > thr).float(), target)
+        metrics = metrics_fn((preds > thr).int(), target)
+        global_dice.update((preds > thr).int(), target)
         dice.update(metrics["dice"], bs)
         accs.update(metrics["accs"], bs)
 
@@ -295,6 +295,7 @@ def _fit_one_fold(
     accs = AverageMeter("accs")
     global_dice = GlobalDice()
     best_score = 0.0
+    patience_cnt = 0
     start = time.time()
     schedule_per_epoch = True
 
@@ -321,12 +322,11 @@ def _fit_one_fold(
                 enabled=config.use_amp, dtype=torch.float16
             ):
                 outs = model(image)
-                logits = outs["logits"]
-                loss = loss_fn(y_pred=logits, y_true=avg_mask)  # type: ignore
+                loss = loss_fn(y_pred=outs["logits"], y_true=avg_mask)  # type: ignore
                 # loss += loss_fn(outs["preds"], target)  # size: 256
 
             # Metrics
-            preds = (outs["preds"].detach().float().cpu() > config.threshold).float()
+            preds = (outs["preds"].detach().float().cpu() > config.threshold).int()
             train_metrics = MetricsFns.calc_metrics(preds, batch["target"])
             global_dice.update(preds, batch["target"])
             dice.update(train_metrics["dice"], bs)
@@ -371,6 +371,11 @@ def _fit_one_fold(
                 config.output_dir
                 / f"{config.arch}-{config.encoder_name}-fold{fold}.pth",
             )
+        else:
+            patience_cnt += 1
+            logger.info(
+                f"Score {score} did not improve from {best_score} for {patience_cnt}."
+            )
         logger.info(
             f"""\n
             Metrics report
@@ -403,6 +408,15 @@ def _fit_one_fold(
                 f"valid/fold{fold}_global_dice": metrics.global_dice,
             }
         )
+
+        if config.patience <= patience_cnt:
+            logger.info(f"Early stopping at epoch {epoch} with best score {best_score}")
+            break
+    # --- End of epoch loop
+    torch.save(
+        model.state_dict(),
+        config.output_dir / f"last-{config.arch}-{config.encoder_name}-fold{fold}.pth",
+    )
     logger.info(
         f"Finish training. best score: {best_score}, duration: {time.time() - start}"
     )

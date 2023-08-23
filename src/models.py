@@ -36,7 +36,7 @@ def builded_model(config: Config, disable_compile: bool, fold: int) -> nn.Module
             tta_type=None,
         )
     else:
-        model = ContrailsModel(
+        model = ContrailsModelV3(
             encoder_name=config.encoder_name,
             encoder_weight=config.encoder_weight,
             aux_params=config.aux_params,
@@ -402,6 +402,42 @@ class CustomedUnet(nn.Module):
 
         preds = self.asym_conv(logits)
         return {"logits": logits, "preds": preds, "cls_logits": None}
+
+
+class ContrailsModelV3(nn.Module):
+    def __init__(
+        self,
+        encoder_name: str,
+        encoder_weight: str | None = None,
+        aux_params: dict[str, Any] | None = None,
+        arch: str = "Unet",
+    ) -> None:
+        super().__init__()
+        if arch != "Unet":
+            raise NotImplementedError
+
+        encoder_depth = 5
+        decoder_channels = [256, 128, 64, 32, 16]
+        self.model = smp.Unet(
+            encoder_name=encoder_name,
+            encoder_weights=encoder_weight,
+            encoder_depth=encoder_depth,
+            decoder_channels=decoder_channels,
+            decoder_use_batchnorm=True,
+            in_channels=3,
+            classes=1,
+            activation=None,
+            aux_params=aux_params,
+        )
+
+    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+        logits = self.model(x)
+        preds = F.interpolate(logits, size=(256, 256), mode="bilinear")
+        outputs = {
+            "logits": logits,
+            "preds": preds,
+        }
+        return outputs
 
 
 class ContrailsModel(nn.Module):

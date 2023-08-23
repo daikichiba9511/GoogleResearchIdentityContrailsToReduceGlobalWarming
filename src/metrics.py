@@ -53,9 +53,9 @@ class GlobalDice:
         self._eps = eps
 
     def update(self, preds: torch.Tensor, mask: torch.Tensor) -> None:
-        self._tp += (preds * mask).sum()
-        self._preds_sum += preds.sum()
-        self._mask_sum += mask.sum()
+        self._tp += (preds * mask).sum().item()
+        self._preds_sum += preds.sum().item()
+        self._mask_sum += mask.sum().item()
 
     @property
     def value(self) -> float:
