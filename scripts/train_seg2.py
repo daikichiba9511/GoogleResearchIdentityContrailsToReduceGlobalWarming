@@ -24,7 +24,7 @@ from src.metrics import GlobalDice, MetricsFns
 from src.models import builded_model
 from src.optimizer import get_optimizer
 from src.scheduler import get_scheduler
-from src.train_tools import AverageMeter, make_tta_model
+from src.train_tools import AverageMeter, make_tta_model, seed_everything
 from src.utils import add_file_handler, get_called_time, get_stream_logger
 
 logger = get_stream_logger(20)
@@ -227,6 +227,7 @@ def _plot_for_debug(
     preds: torch.Tensor,
     save_dir: Path,
     record_ids: list[str],
+    thr: float = 0.5,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -244,7 +245,7 @@ def _plot_for_debug(
         color_mask[mask == 1] = (0, 255, 0)
 
         color_preds = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
-        color_preds[pred == 1] = (0, 0, 255)
+        color_preds[pred > thr] = (0, 0, 255)
 
         fig, axes = plt.subplots(1, 3, figsize=(12, 4))
         assert isinstance(axes, np.ndarray) and isinstance(fig, plt.Figure)
@@ -308,6 +309,7 @@ def validated(
 def _fit_one_fold(
     fold: int, config: Config, disable_compile: bool, debug: bool
 ) -> None:
+    seed_everything(config.seed + fold)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = builded_model(config, disable_compile, fold).to(device)
     optimizer = get_optimizer(config.optimizer_type, config.optimizer_params, model)
@@ -420,6 +422,7 @@ def _fit_one_fold(
         # Early stopping
         score = metrics.global_dice
         if score > best_score:
+            patience_cnt = 0
             logger.info(f"Updated score {best_score} -> {score}")
             best_score = score
             torch.save(
@@ -527,6 +530,7 @@ def main(
     folds = config.n_splits if train_all else 1
     for fold in range(folds):
         logger.info(f"Start training fold {fold}...")
+        seed_everything(config.seed + fold)
         _fit_one_fold(fold, config, disable_compile, debug)
 
     if run is not None:
