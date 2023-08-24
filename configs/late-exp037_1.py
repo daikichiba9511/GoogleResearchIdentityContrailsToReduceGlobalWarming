@@ -64,7 +64,7 @@ config = {
     "resume_training": False,
     "resume_path": "",
     "positive_only": False,
-    "epochs": 40,
+    "epochs": 20,
     "train_params": {},
     "max_grad_norm": 1000.0,
     "patience": 10,
@@ -75,13 +75,13 @@ config = {
     "aux_params": None,
     "optimizer_type": "adamw",
     "optimizer_params": {
-        "lr": 1e-3,
-        "weight_decay": 1e-2,
+        "lr": 5e-4,
+        "weight_decay": 0.0,
         "eps": 1e-4,
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
-        "t_initial": 40,
+        "t_initial": 20,
         "lr_min": 1e-6,
         "warmup_prefix": True,
         "warmup_t": 2,  # 10% of epochs

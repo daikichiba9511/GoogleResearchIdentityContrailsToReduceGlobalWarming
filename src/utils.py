@@ -120,10 +120,9 @@ def plot_preds_with_label_on_image(
     image: np.ndarray,
     label: np.ndarray,
     figsize: tuple[int, int] = (10, 10),
-) -> tuple:
+) -> tuple[plt.Figure, plt.Axes]:
     fig, ax = plt.subplots(1, 1, figsize=figsize)
-    if not isinstance(ax, plt.Axes):
-        raise ValueError("image must be plt.Axes")
+    assert isinstance(ax, plt.Axes) and isinstance(fig, plt.Figure)
 
     color_label = np.zeros((*label.shape, 3))
     color_label[label == 1] = (0, 1, 0)
@@ -144,11 +143,7 @@ def plot_a_label_on_a_image(
     figsize: tuple[int, int] = (10, 10),
 ) -> tuple[plt.Figure, plt.Axes]:
     fig, ax = plt.subplots(1, 1, figsize=figsize)
-    if not isinstance(ax, plt.Axes):
-        raise ValueError("image must be plt.Axes")
-
-    if not isinstance(fig, plt.Figure):
-        raise ValueError("image must be plt.Figure")
+    assert isinstance(ax, plt.Axes) and isinstance(fig, plt.Figure)
 
     color_label = np.zeros((*label.shape, 3))
     color_label[label == 1] = (0, 1, 0)

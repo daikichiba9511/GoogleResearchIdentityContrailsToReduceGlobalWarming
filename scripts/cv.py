@@ -14,7 +14,11 @@ from src.dataset import ContrailsDatasetV2
 from src.metrics import GlobalDice, MetricsFns
 from src.models import ContrailsModel, CustomedUnet, builded_model
 from src.train_tools import AverageMeter, seed_everything
-from src.utils import add_file_handler, get_stream_logger
+from src.utils import (
+    add_file_handler,
+    get_stream_logger,
+    plot_preds_with_label_on_image,
+)
 
 logger = get_stream_logger(20)
 
@@ -100,10 +104,25 @@ def main(debug: bool = False, batch_size: int = 32) -> None:
         preds = preds.detach().cpu().numpy()
         mask = mask.detach().cpu().numpy()
 
+        # Metrics
         metrics = MetricsFns.calc_metrics(preds, mask)
         dices.update(metrics["dice"])
         accs.update(metrics["accs"])
         global_dice.update(preds, mask)
+
+        # Visualize
+        if i % 10 == 0:
+            for j in range(len(preds)):
+                mask_i = mask[j]
+                if mask_i.flatten().sum() == 0:
+                    continue
+
+                fig, ax = plot_preds_with_label_on_image(
+                    image[j],
+                    preds[j],
+                    mask[j],
+                )
+                fig.savefig(f"./cv_logs/{description}/visualize/batch{i}_{j}.png")
 
     logger.info(
         f"""

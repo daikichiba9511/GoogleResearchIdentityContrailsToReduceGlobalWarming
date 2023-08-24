@@ -74,10 +74,10 @@ class ContrailDatasetV3(Dataset):
         return len(self._image_dirs)
 
     @staticmethod
-    def rescale_range(
-        img: np.ndarray, min_value: float, max_value: float
-    ) -> np.ndarray:
-        return img - min_value / (max_value - min_value)
+    def _rescale_range(img: np.ndarray, bounds: tuple[int, int]) -> np.ndarray:
+        if bounds[0] >= bounds[1]:
+            raise ValueError(f"bounds[0] must be less than bounds[1], but {bounds}")
+        return (img - bounds[0]) / (bounds[1] - bounds[0])
 
     @staticmethod
     def _read_record(
@@ -95,9 +95,7 @@ class ContrailDatasetV3(Dataset):
             img: (H, W, C)
             img_size: (H, W)
         """
-        resized_img = A.resize(
-            img, height=img_size[0], width=img_size[1], interpolation=cv2.INTER_LINEAR
-        )
+        resized_img = cv2.resize(img, dsize=img_size, interpolation=cv2.INTER_LINEAR)
         return resized_img
 
     @classmethod
@@ -110,22 +108,25 @@ class ContrailDatasetV3(Dataset):
         band14 = record_data["band_14"]
         band15 = record_data["band_15"]
 
-        r = cls.rescale_range(band15 - band14, _tdiff_bounds[0], _tdiff_bounds[1])
-        g = cls.rescale_range(
-            band14 - band11, _cloud_tp_tdiff_bounds[0], _cloud_tp_tdiff_bounds[1]
-        )
-        b = cls.rescale_range(band11, _t11_bounds[0], _t11_bounds[1])
+        r = cls._rescale_range(band15 - band14, _tdiff_bounds)
+        g = cls._rescale_range(band14 - band11, _cloud_tp_tdiff_bounds)
+        b = cls._rescale_range(band14, _t11_bounds)
 
         # shape: (256, 256, T), T = n_times_before + n_times_after + 1 = 8
         false_color = np.clip(np.stack([r, g, b], axis=2), 0, 1)
         return false_color
 
+    @staticmethod
+    def _img2tensor(img: np.ndarray) -> torch.Tensor:
+        return torch.from_numpy(img.transpose(2, 0, 1)).float()
+
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor | str]:
         image_dir = self._image_dirs[idx]
         record_id = self._record_ids[idx]
 
+        ntimes_before = 4
         raw_image = (
-            self._get_false_color(self._read_record(image_dir))[..., 4]
+            self._get_false_color(self._read_record(image_dir))[..., ntimes_before]
             .reshape(256, 256, 3)
             .astype(np.float32)
         )
@@ -141,11 +142,12 @@ class ContrailDatasetV3(Dataset):
             .reshape(256, 256)
             .astype(np.float32)
         )
+        if self._fix_offset:
+            resized_image = fixed_offset_img(raw_image, self._img_size)
+        else:
+            resized_image = self._resized_img(raw_image, self._img_size)
+
         if self._phase == "valid":
-            if self._fix_offset:
-                resized_image = fixed_offset_img(raw_image, self._img_size)
-            else:
-                resized_image = self._resized_img(raw_image, self._img_size)
             augmented = self._transform(image=resized_image, mask=pixel_mask)
             return {
                 "image": augmented["image"],
@@ -159,11 +161,6 @@ class ContrailDatasetV3(Dataset):
             .astype(np.float32)
             .mean(axis=-1)
         )
-        if self._fix_offset:
-            resized_image = fixed_offset_img(raw_image, self._img_size)
-        else:
-            resized_image = self._resized_img(raw_image, self._img_size)
-
         if self._use_soft_label:
             resized_mask = self._resized_img(avg_mask, self._img_size)
         else:
@@ -224,6 +221,46 @@ def _builded_loaders(
     return dl_train, dl_valid
 
 
+def _plot_for_debug(
+    imgs: torch.Tensor,
+    masks: torch.Tensor,
+    preds: torch.Tensor,
+    save_dir: Path,
+    record_ids: list[str],
+) -> None:
+    import matplotlib.pyplot as plt
+
+    # channles first -> last
+    _imgs: np.ndarray = imgs.detach().cpu().numpy()
+    _masks: np.ndarray = masks.detach().cpu().numpy()
+    _preds: np.ndarray = preds.detach().cpu().numpy()
+
+    for img, mask, pred, record_id in zip(_imgs, _masks, _preds, record_ids):
+        img = img.transpose(1, 2, 0)
+        mask = mask.squeeze(0)
+        pred = pred.squeeze(0)
+
+        color_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+        color_mask[mask == 1] = (0, 255, 0)
+
+        color_preds = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+        color_preds[pred == 1] = (0, 0, 255)
+
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        assert isinstance(axes, np.ndarray) and isinstance(fig, plt.Figure)
+        axes[0].imshow(img)
+        axes[1].imshow(mask)
+        axes[2].imshow(pred)
+        fig.savefig(save_dir / f"{record_id}.png")
+
+        fig, axes = plt.subplots(1, 1, figsize=(8, 4))
+        assert isinstance(axes, plt.Axes) and isinstance(fig, plt.Figure)
+        axes.imshow(img)
+        axes.imshow(color_mask, alpha=0.5)
+        axes.imshow(color_preds, alpha=0.5)
+        fig.savefig(save_dir / f"{record_id}_overlay.png")
+
+
 def validated(
     model: nn.Module,
     loader: DataLoader,
@@ -234,10 +271,13 @@ def validated(
     use_amp: bool = False,
 ) -> Metrics:
     model.eval()
+
+    # Metrics Initialization
     global_dice = GlobalDice()
     losses = AverageMeter("loss")
     dice = AverageMeter("dice")
     accs = AverageMeter("accs")
+
     model = make_tta_model(model)
 
     start = time.time()
@@ -300,6 +340,7 @@ def _fit_one_fold(
     schedule_per_epoch = True
 
     for epoch in range(config.epochs):
+        epoch_start = time.time()
         if schedule_per_epoch:
             scheduler.step(epoch)
 
@@ -322,6 +363,7 @@ def _fit_one_fold(
                 enabled=config.use_amp, dtype=torch.float16
             ):
                 outs = model(image)
+                # size: 512
                 loss = loss_fn(y_pred=outs["logits"], y_true=avg_mask)  # type: ignore
                 # loss += loss_fn(outs["preds"], target)  # size: 256
 
@@ -332,6 +374,17 @@ def _fit_one_fold(
             dice.update(train_metrics["dice"], bs)
             accs.update(train_metrics["accs"], bs)
             losses.update(loss.item(), bs)
+
+            if (
+                debug
+                or (epoch == config.epochs - 1 and i == len(dl_train) - 1)
+                or (patience_cnt == config.patience - 1 and i == len(dl_train) - 1)
+            ):
+                save_dir = Path(f"debug/{config.expname}/train")
+                save_dir.mkdir(parents=True, exist_ok=True)
+                _plot_for_debug(
+                    image, batch["avg_mask"], preds, save_dir, batch["record_id"]
+                )
 
             # Backpropagation
             if config.use_amp:
@@ -352,6 +405,7 @@ def _fit_one_fold(
 
                 optimizer.zero_grad(set_to_none=True)
             # --- End of train loop
+        train_duration = time.time() - epoch_start
         # --- Validation
         metrics = validated(
             model,
@@ -362,6 +416,8 @@ def _fit_one_fold(
             config.threshold,
             config.use_amp,
         )
+
+        # Early stopping
         score = metrics.global_dice
         if score > best_score:
             logger.info(f"Updated score {best_score} -> {score}")
@@ -376,32 +432,39 @@ def _fit_one_fold(
             logger.info(
                 f"Score {score} did not improve from {best_score} for {patience_cnt}."
             )
+
+        # Logging
         logger.info(
             f"""\n
-            Metrics report
-            --------------------------------
+                Metrics report
+                --------------------------------
 
-            Epoch              : {epoch}
-            lr                 : {optimizer.param_groups[0]['lr']}
+                Epoch               : {epoch}
+                Total Time          : {time.time() - start}
+                LR                  : {optimizer.param_groups[0]['lr']}
 
-            [Train] loss       : {losses.avg}
-            [Train] avg dice   : {dice.avg}
-            [Train] avg accs   : {accs.avg}
-            [Train] global_dice: {global_dice.value}
+                [Train] Duration    : {train_duration}
+                [Train] Loss        : {losses.avg}
+                [Train] Avg Dice    : {dice.avg}
+                [Train] Avg Accs    : {accs.avg}
+                [Train] Global Dice : {global_dice.value}
 
-            [Valid] loss       : {metrics.loss}
-            [Valid] avg dice   : {metrics.batch_avg_dice}
-            [Valid] avg accs   : {metrics.batch_avg_acc}
-            [Valid] global_dice: {metrics.global_dice}
+                [Valid] Duration    : {metrics.duration}
+                [Valid] Loss        : {metrics.loss}
+                [Valid] Avg dice    : {metrics.batch_avg_dice}
+                [Valid] Avg accs    : {metrics.batch_avg_acc}
+                [Valid] Global Dice : {metrics.global_dice}
         """
         )
         wandb.log(
             {
                 "lr": optimizer.param_groups[0]["lr"],
                 "train/loss": losses.avg,
+                "train/duaration": train_duration,
                 f"train/fold{fold}_dice_avg": dice.avg,
                 f"train/fold{fold}_accs_avg": accs.avg,
                 f"train/fold{fold}_global_dice": global_dice.value,
+                "valid/duration": metrics.duration,
                 "valid/loss": metrics.loss,
                 f"valid/fold{fold}_dice_avg": metrics.batch_avg_dice,
                 f"valid/fold{fold}_accs_avg": metrics.batch_avg_acc,
