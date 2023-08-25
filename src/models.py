@@ -333,9 +333,14 @@ class CustomedUnet(nn.Module):
         tta_type: str | None = None,
     ) -> None:
         super().__init__()
-        self.encoder = timm.create_model(
-            name, features_only=True, pretrained=pretrained
-        )
+        if name.startswith("coat"):
+            self.encoder = timm.create_model(
+                name, return_interm_layers=True, pretrained=False
+            )
+        else:
+            self.encoder = timm.create_model(
+                name, features_only=True, pretrained=pretrained
+            )
         encoder_channels = self.encoder.feature_info.channels()
         if len(encoder_channels) != len(decoder_channels):
             raise ValueError(
@@ -812,19 +817,25 @@ if __name__ == "__main__":
 
     seed_everything(42)
 
-    model = CustomedUnet(name="maxvit_tiny_tf_512", pretrained=True)
-    im = torch.randn(8, 3, 512, 512)
-    out1 = model(im)
-    print(out1["logits"].shape)
-    print(out1["preds"].shape)
-
-    seed_everything(42)
-
-    model = CustomedUnet(name="maxvit_tiny_tf_512.in1k", pretrained=True)
+    # model = CustomedUnet(name="maxvit_tiny_tf_512", pretrained=True)
     # im = torch.randn(8, 3, 512, 512)
+    # out1 = model(im)
+    # print(out1["logits"].shape)
+    # print(out1["preds"].shape)
+    #
+    # seed_everything(42)
+    #
+    # model = CustomedUnet(name="maxvit_tiny_tf_512.in1k", pretrained=True)
+    # # im = torch.randn(8, 3, 512, 512)
+    # out2 = model(im)
+    # print(out2["logits"].shape)
+    # print(out2["preds"].shape)
+    #
+    # assert (out1["logits"] == out2["logits"]).all()
+    # assert (out1["preds"] == out2["preds"]).all()
+
+    model = CustomedUnet("coat_lite_medium.in1k")
+    im = torch.randn(8, 3, 512, 512)
     out2 = model(im)
     print(out2["logits"].shape)
     print(out2["preds"].shape)
-
-    assert (out1["logits"] == out2["logits"]).all()
-    assert (out1["preds"] == out2["preds"]).all()

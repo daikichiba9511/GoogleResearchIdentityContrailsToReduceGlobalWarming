@@ -84,12 +84,13 @@ config = {
         "t_initial": 40,
         "lr_min": 1e-6,
         "warmup_prefix": True,
-        "warmup_t": 0,  # 10% of epochs
+        "warmup_t": 1,
         "warmup_lr_init": 1e-8,
     },
     "train_aug_list": [
         A.RandomRotate90(p=1.0),
         A.HorizontalFlip(p=0.5),
+        A.ShiftScaleRotate(rotate_limit=30, scale_limit=0.2, p=0.75),
         ToTensorV2(),
     ],
     "valid_aug_list": [

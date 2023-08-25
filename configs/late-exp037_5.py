@@ -13,13 +13,14 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp037
+# exp037_5
 
-copy from exp035_4
+copy from exp037_4
 
 # Purpose
 
-- encoder: tu-maxvit_tiny_tf_512 img_size={IMG_SIZE}
+- encoder: tu-maxvit_tiny_tf_512
+- img_size={IMG_SIZE}
 - with_pseudo_label
 - soft_bce
 - try to use soft label
@@ -76,7 +77,7 @@ config = {
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 1e-3,
-        "weight_decay": 0.0,
+        "weight_decay": 1e-2,
         "eps": 1e-4,
     },
     "scheduler_type": "cosine_with_warmup",
@@ -84,12 +85,13 @@ config = {
         "t_initial": 40,
         "lr_min": 1e-6,
         "warmup_prefix": True,
-        "warmup_t": 0,  # 10% of epochs
+        "warmup_t": 1,
         "warmup_lr_init": 1e-8,
     },
     "train_aug_list": [
         A.RandomRotate90(p=1.0),
         A.HorizontalFlip(p=0.5),
+        A.ShiftScaleRotate(rotate_limit=30, scale_limit=0.2, p=0.75),
         ToTensorV2(),
     ],
     "valid_aug_list": [

@@ -260,6 +260,7 @@ def _plot_for_debug(
         axes.imshow(color_mask, alpha=0.5)
         axes.imshow(color_preds, alpha=0.5)
         fig.savefig(save_dir / f"{record_id}_overlay.png")
+        plt.close("all")
 
 
 def validated(
@@ -367,6 +368,10 @@ def _fit_one_fold(
                 outs = model(image)
                 # size: 512
                 loss = loss_fn(y_pred=outs["logits"], y_true=avg_mask)  # type: ignore
+                resized_avg_mask = torch.nn.functional.interpolate(
+                    avg_mask, size=(256, 256), mode="bilinear"
+                )
+                loss += loss_fn(outs["preds"], resized_avg_mask)  # type: ignore
                 # loss += loss_fn(outs["preds"], target)  # size: 256
 
             # Metrics
@@ -395,7 +400,8 @@ def _fit_one_fold(
                 loss.backward()
 
             if (i + 1) % config.grad_accum_step_num == 0:
-                torch.nn.utils.clip_grad_norm_(  # type: ignore
+                # torch.nn.utils.clip_grad_norm_(  # type: ignore
+                torch.nn.utils.clip_grad_value_(  # type: ignore
                     model.parameters(), config.max_grad_norm
                 )
 
