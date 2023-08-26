@@ -834,6 +834,7 @@ if __name__ == "__main__":
     # assert (out1["logits"] == out2["logits"]).all()
     # assert (out1["preds"] == out2["preds"]).all()
 
+    # TODO: 動かせてない
     model = CustomedUnet("coat_lite_medium.in1k")
     im = torch.randn(8, 3, 512, 512)
     out2 = model(im)

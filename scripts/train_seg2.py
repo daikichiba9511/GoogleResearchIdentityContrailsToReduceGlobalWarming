@@ -1,5 +1,4 @@
 import argparse
-import importlib
 import multiprocessing as mp
 import pprint
 import time
@@ -13,7 +12,9 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
+import torchvision.transforms.functional as F_t
 from torch.utils.data import DataLoader, Dataset
+from torchvision.transforms import InterpolationMode
 from tqdm.auto import tqdm
 
 import wandb
@@ -130,47 +131,61 @@ class ContrailDatasetV3(Dataset):
             .reshape(256, 256, 3)
             .astype(np.float32)
         )
-        if self._phase == "test":
-            image = self._transform(image=raw_image)["image"]
-            return {
-                "image": image,
-                "record_id": record_id,
-            }
-
-        pixel_mask = (
-            np.load(image_dir / "human_pixel_masks.npy")  # (256, 256, 1)
-            .reshape(256, 256)
-            .astype(np.float32)
-        )
         if self._fix_offset:
             resized_image = fixed_offset_img(raw_image, self._img_size)
         else:
             resized_image = self._resized_img(raw_image, self._img_size)
 
+        if self._phase == "test":
+            image = self._transform(image=resized_image)["image"]
+            return {
+                "image": image,
+                "record_id": record_id,
+            }
+
+        pixel_mask: np.ndarray = (
+            np.load(image_dir / "human_pixel_masks.npy")  # (256, 256, 1)
+            .astype(np.float32)
+            .reshape(256, 256)
+        )
         if self._phase == "valid":
+            assert pixel_mask.shape == (256, 256)
             augmented = self._transform(image=resized_image, mask=pixel_mask)
             return {
                 "image": augmented["image"],
-                "target": augmented["mask"].unsqueeze(0),
+                "target": augmented["mask"].reshape(1, 256, 256),
                 "record_id": record_id,
             }
 
         # --- Train phase
-        avg_mask = (
+        avg_mask: np.ndarray = (
             np.load(image_dir / "human_individual_masks.npy")  # (256, 256, 1, R)
             .astype(np.float32)
             .mean(axis=-1)
+            .reshape(256, 256)
         )
-        if self._use_soft_label:
-            resized_mask = self._resized_img(avg_mask, self._img_size)
-        else:
-            resized_mask = self._resized_img(pixel_mask, self._img_size)
+        mask = avg_mask if self._use_soft_label else pixel_mask
 
-        augmented = self._transform(image=resized_image, mask=resized_mask)
+        assert mask.shape == (256, 256)
+        augmented = self._transform(image=resized_image, mask=mask)
+        # (C, H, W)
+        augmented_mask: torch.Tensor = augmented["mask"].reshape(1, 256, 256)
+        # 回転してないからtrainの精度はでない, 256x256
+        target_pixel_mask = torch.from_numpy(pixel_mask).float()
+
+        # Resize avg_mask to 512x512
+        resized_mask = F_t.resize(
+            augmented_mask,
+            [*self._img_size],
+            InterpolationMode.BILINEAR,
+            antialias=True,
+        )
         return {
             "image": augmented["image"],
-            "target": pixel_mask.reshape(1, 256, 256),
-            "avg_mask": augmented["mask"].reshape(1, *self._img_size),
+            "raw_resized_image": torch.from_numpy(resized_image),
+            "target": target_pixel_mask.reshape(1, 256, 256),
+            "avg_mask": resized_mask.reshape(1, *self._img_size),
+            "raw_size_avg_mask": augmented_mask.reshape(1, 256, 256),
             "record_id": record_id,
         }
 
@@ -190,7 +205,7 @@ def _builded_loaders(
         train_image_dir,
         train_record_ids,
         "train",
-        A.Compose(train_aug),
+        A.Compose(train_aug, is_check_shapes=False),
         fix_offset=True,
         use_soft_label=True,
     )
@@ -367,12 +382,25 @@ def _fit_one_fold(
             ):
                 outs = model(image)
                 # size: 512
-                loss = loss_fn(y_pred=outs["logits"], y_true=avg_mask)  # type: ignore
-                resized_avg_mask = torch.nn.functional.interpolate(
-                    avg_mask, size=(256, 256), mode="bilinear"
+                loss = (
+                    # 512x512
+                    loss_fn(y_pred=outs["logits"], y_true=avg_mask)  # type: ignore
+                    # resized_avg_mask = torch.nn.functional.interpolate(
+                    #     avg_mask, size=(256, 256), mode="bilinear"
+                    # )
+                    # Duplicate resize is not good
+                    # 256x256
+                    + loss_fn(
+                        outs["preds"],
+                        batch["raw_size_avg_mask"].to(device, non_blocking=True),
+                    )
                 )
-                loss += loss_fn(outs["preds"], resized_avg_mask)  # type: ignore
-                # loss += loss_fn(outs["preds"], target)  # size: 256
+
+            # Backpropagation
+            if config.use_amp:
+                grad_scaler.scale(loss).backward()  # type: ignore
+            else:
+                loss.backward()
 
             # Metrics
             preds = (outs["preds"].detach().float().cpu() > config.threshold).int()
@@ -392,12 +420,6 @@ def _fit_one_fold(
                 _plot_for_debug(
                     image, batch["avg_mask"], preds, save_dir, batch["record_id"]
                 )
-
-            # Backpropagation
-            if config.use_amp:
-                grad_scaler.scale(loss).backward()  # type: ignore
-            else:
-                loss.backward()
 
             if (i + 1) % config.grad_accum_step_num == 0:
                 # torch.nn.utils.clip_grad_norm_(  # type: ignore
