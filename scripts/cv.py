@@ -10,13 +10,13 @@ from torch.utils.data import DataLoader
 
 from configs.factory import made_config
 from scripts.train_seg2 import ContrailDatasetV3
-from src.dataset import ContrailsDatasetV2
 from src.metrics import GlobalDice, MetricsFns
 from src.models import ContrailsModel, CustomedUnet, builded_model
 from src.train_tools import AverageMeter, seed_everything
 from src.utils import (
     add_file_handler,
     get_stream_logger,
+    plot_for_debug,
     plot_preds_with_label_on_image,
 )
 
@@ -112,11 +112,18 @@ def main(debug: bool = False, batch_size: int = 32) -> None:
 
         # Visualize
         if i % 10 == 0:
+            record_ids = batch["record_id"]
             for j in range(len(preds)):
                 mask_i = mask[j]
                 if mask_i.flatten().sum() == 0:
                     continue
-
+                plot_for_debug(
+                    image[j],
+                    mask[j],
+                    preds[j],
+                    Path(f"./cv_logs/{description}/visualize"),
+                    record_ids[j],
+                )
                 fig, ax = plot_preds_with_label_on_image(
                     image[j],
                     preds[j],

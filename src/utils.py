@@ -1,10 +1,12 @@
 from datetime import datetime, timedelta
 from logging import INFO, FileHandler, Formatter, Logger, StreamHandler, getLogger
+from pathlib import Path
 from typing import Any, Final, Sequence, TypeVar
 
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 
 __all__ = ["get_stream_logger", "add_file_handler"]
 
@@ -178,6 +180,51 @@ def plot_images_with_labels(
         ax[i].imshow(color_label, alpha=0.5, label="label")
 
     return fig, ax
+
+
+def plot_for_debug(
+    imgs: torch.Tensor,
+    masks: torch.Tensor,
+    preds: torch.Tensor,
+    save_dir: Path,
+    record_ids: list[str],
+    thr: float = 0.5,
+) -> None:
+    import matplotlib.pyplot as plt
+
+    # channles first -> last
+    _imgs: np.ndarray = imgs.detach().cpu().numpy()
+    _masks: np.ndarray = masks.detach().cpu().numpy()
+    _preds: np.ndarray = preds.detach().cpu().numpy()
+
+    for img, mask, pred, record_id in zip(_imgs, _masks, _preds, record_ids):
+        img = img.transpose(1, 2, 0)
+        mask = mask.squeeze(0)
+        pred = pred.squeeze(0)
+
+        color_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
+        color_mask[mask == 1] = (0, 255, 0)
+
+        color_preds = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
+        color_preds[pred > thr] = (0, 0, 255)
+
+        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
+        assert isinstance(axes, np.ndarray) and isinstance(fig, plt.Figure)
+        axes[0].imshow(img)
+        axes[0].set_title("image")
+        axes[1].imshow(mask)
+        axes[1].set_title("mask")
+        axes[2].imshow(pred)
+        axes[2].set_title("pred")
+        fig.savefig(save_dir / f"{record_id}.png")
+
+        fig, axes = plt.subplots(1, 1, figsize=(8, 4))
+        assert isinstance(axes, plt.Axes) and isinstance(fig, plt.Figure)
+        axes.imshow(img)
+        axes.imshow(color_mask, alpha=0.5)
+        axes.imshow(color_preds, alpha=0.5)
+        fig.savefig(save_dir / f"{record_id}_overlay.png")
+        plt.close("all")
 
 
 def filter_tiny_objects(image: np.ndarray, thr: int) -> np.ndarray:

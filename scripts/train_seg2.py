@@ -19,6 +19,7 @@ from tqdm.auto import tqdm
 
 import wandb
 from configs.factory import Config, made_config
+from src.augmentations import cutmix, label_noise, mixup
 from src.dataset import fixed_offset_img
 from src.losses import get_loss
 from src.metrics import GlobalDice, MetricsFns
@@ -26,7 +27,12 @@ from src.models import builded_model
 from src.optimizer import get_optimizer
 from src.scheduler import get_scheduler
 from src.train_tools import AverageMeter, make_tta_model, seed_everything
-from src.utils import add_file_handler, get_called_time, get_stream_logger
+from src.utils import (
+    add_file_handler,
+    get_called_time,
+    get_stream_logger,
+    plot_for_debug,
+)
 
 logger = get_stream_logger(20)
 TODAY = get_called_time()
@@ -34,6 +40,65 @@ TODAY = get_called_time()
 
 LossFn = Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
 MetricFn = Callable[[torch.Tensor, torch.Tensor], dict[str, float | int]]
+
+
+@dataclass(frozen=True)
+class AugParams:
+    do_mixup: bool
+    mixup_alpha: float
+    mixup_prob: float
+
+    do_cutmix: bool
+    cutmix_alpha: float
+    cutmix_prob: float
+    turn_off_cutmix_epoch: int | None
+
+    do_label_noise: bool
+    label_noise_prob: float
+
+
+def mixed_imgs(
+    aug_params: AugParams | None, epoch: int, batch: dict[str, torch.Tensor]
+) -> dict[str, torch.Tensor]:
+    images = batch["image"]
+    target = batch["target"]
+
+    if not (isinstance(images, torch.Tensor) and isinstance(target, torch.Tensor)):
+        raise TypeError(f"{type(images) = }, {type(target) = }")
+
+    is_mixed = False
+    if (
+        aug_params is not None
+        and aug_params.do_cutmix
+        and aug_params.turn_off_cutmix_epoch is not None
+        and epoch <= aug_params.turn_off_cutmix_epoch
+        and np.random.rand() <= aug_params.cutmix_prob
+    ):
+        images, target, _, _ = mixup(images, target, alpha=aug_params.mixup_alpha)
+        is_mixed = True
+
+    if (
+        aug_params is not None
+        and aug_params.do_mixup
+        and np.random.rand() <= aug_params.mixup_prob
+    ):
+        images, target, _, _ = cutmix(images, target, alpha=aug_params.cutmix_alpha)
+        is_mixed = True
+
+    if (
+        aug_params is not None
+        and aug_params.do_label_noise
+        and np.random.rand() <= aug_params.label_noise_prob
+    ):
+        images, target, _ = label_noise(images, target)
+        is_mixed = True
+
+    mixed_batch = {
+        "image": images,
+        "target": target,
+        "is_mixed": is_mixed,
+    }
+    return mixed_batch
 
 
 ##################
@@ -55,6 +120,7 @@ class ContrailDatasetV3(Dataset):
         record_ids: Sequence[str],
         phase: str,
         transform: A.Compose,
+        augment_prob: float = 0.8,
         img_size: tuple[int, int] = (512, 512),
         fix_offset: bool = False,
         use_soft_label: bool = False,
@@ -70,6 +136,7 @@ class ContrailDatasetV3(Dataset):
         self._img_size = img_size
         self._fix_offset = fix_offset
         self._use_soft_label = use_soft_label
+        self._augment_prob = augment_prob
 
     def __len__(self) -> int:
         return len(self._image_dirs)
@@ -131,12 +198,11 @@ class ContrailDatasetV3(Dataset):
             .reshape(256, 256, 3)
             .astype(np.float32)
         )
-        if self._fix_offset:
-            resized_image = fixed_offset_img(raw_image, self._img_size)
-        else:
-            resized_image = self._resized_img(raw_image, self._img_size)
+        resize_fn = fixed_offset_img if self._fix_offset else self._resized_img
+        resized_image = resize_fn(raw_image, self._img_size)
 
         if self._phase == "test":
+            # resized_image = self._resized_img(raw_image, self._img_size)
             image = self._transform(image=resized_image)["image"]
             return {
                 "image": image,
@@ -150,6 +216,7 @@ class ContrailDatasetV3(Dataset):
         )
         if self._phase == "valid":
             assert pixel_mask.shape == (256, 256)
+            # resized_image = self._resized_img(raw_image, self._img_size)
             augmented = self._transform(image=resized_image, mask=pixel_mask)
             return {
                 "image": augmented["image"],
@@ -165,28 +232,40 @@ class ContrailDatasetV3(Dataset):
             .reshape(256, 256)
         )
         mask = avg_mask if self._use_soft_label else pixel_mask
-
         assert mask.shape == (256, 256)
-        augmented = self._transform(image=resized_image, mask=mask)
-        # (C, H, W)
-        augmented_mask: torch.Tensor = augmented["mask"].reshape(1, 256, 256)
-        # 回転してないからtrainの精度はでない, 256x256
-        target_pixel_mask = torch.from_numpy(pixel_mask).float()
 
-        # Resize avg_mask to 512x512
-        resized_mask = F_t.resize(
-            augmented_mask,
+        if np.random.randn() < self._augment_prob:
+            is_augmented = 1
+            augmented = self._transform(image=resized_image, mask=mask)
+            # (1, 256,256)
+            raw_size_avg_mask: torch.Tensor = augmented["mask"].reshape(1, 256, 256)
+            # (C, H, W)
+            image = augmented["image"]
+        else:
+            is_augmented = 0
+            # (1, 256, 256)
+            raw_size_avg_mask = torch.tensor(mask).reshape(1, 256, 256)
+            # (C, H, W)
+            image = torch.from_numpy(resized_image).permute(2, 0, 1).float()
+
+        # (1, H, W)
+        resized_avg_mask = F_t.resize(
+            raw_size_avg_mask,
             [*self._img_size],
             InterpolationMode.BILINEAR,
             antialias=True,
-        )
+        ).reshape(1, *self._img_size)
+
+        # 回転してないからtrainの精度はでない, 256x256
+        target_pixel_mask = torch.from_numpy(pixel_mask).float().reshape(1, 256, 256)
+
         return {
-            "image": augmented["image"],
-            "raw_resized_image": torch.from_numpy(resized_image),
-            "target": target_pixel_mask.reshape(1, 256, 256),
-            "avg_mask": resized_mask.reshape(1, *self._img_size),
-            "raw_size_avg_mask": augmented_mask.reshape(1, 256, 256),
+            "image": image,
+            "target": target_pixel_mask,
+            "avg_mask": resized_avg_mask,
+            "raw_size_avg_mask": raw_size_avg_mask,
             "record_id": record_id,
+            "is_augmented": torch.tensor(is_augmented),
         }
 
 
@@ -236,48 +315,6 @@ def _builded_loaders(
     return dl_train, dl_valid
 
 
-def _plot_for_debug(
-    imgs: torch.Tensor,
-    masks: torch.Tensor,
-    preds: torch.Tensor,
-    save_dir: Path,
-    record_ids: list[str],
-    thr: float = 0.5,
-) -> None:
-    import matplotlib.pyplot as plt
-
-    # channles first -> last
-    _imgs: np.ndarray = imgs.detach().cpu().numpy()
-    _masks: np.ndarray = masks.detach().cpu().numpy()
-    _preds: np.ndarray = preds.detach().cpu().numpy()
-
-    for img, mask, pred, record_id in zip(_imgs, _masks, _preds, record_ids):
-        img = img.transpose(1, 2, 0)
-        mask = mask.squeeze(0)
-        pred = pred.squeeze(0)
-
-        color_mask = np.zeros((mask.shape[0], mask.shape[1], 3), dtype=np.uint8)
-        color_mask[mask == 1] = (0, 255, 0)
-
-        color_preds = np.zeros((pred.shape[0], pred.shape[1], 3), dtype=np.uint8)
-        color_preds[pred > thr] = (0, 0, 255)
-
-        fig, axes = plt.subplots(1, 3, figsize=(12, 4))
-        assert isinstance(axes, np.ndarray) and isinstance(fig, plt.Figure)
-        axes[0].imshow(img)
-        axes[1].imshow(mask)
-        axes[2].imshow(pred)
-        fig.savefig(save_dir / f"{record_id}.png")
-
-        fig, axes = plt.subplots(1, 1, figsize=(8, 4))
-        assert isinstance(axes, plt.Axes) and isinstance(fig, plt.Figure)
-        axes.imshow(img)
-        axes.imshow(color_mask, alpha=0.5)
-        axes.imshow(color_preds, alpha=0.5)
-        fig.savefig(save_dir / f"{record_id}_overlay.png")
-        plt.close("all")
-
-
 def validated(
     model: nn.Module,
     loader: DataLoader,
@@ -308,7 +345,7 @@ def validated(
         ):
             outs = model(image)
         preds = outs["preds"].detach().float().cpu()
-        loss = loss_fn(preds, target)
+        loss = loss_fn(preds, target).mean(dim=(1, 2, 3)).mean()
         losses.update(loss.item(), bs)
 
         # Metrics
@@ -323,9 +360,12 @@ def validated(
 
 
 def _fit_one_fold(
-    fold: int, config: Config, disable_compile: bool, debug: bool
+    fold: int,
+    config: Config,
+    disable_compile: bool,
+    debug: bool,
+    save_assets: bool = False,
 ) -> None:
-    seed_everything(config.seed + fold)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = builded_model(config, disable_compile, fold).to(device)
     optimizer = get_optimizer(config.optimizer_type, config.optimizer_params, model)
@@ -358,6 +398,7 @@ def _fit_one_fold(
     schedule_per_epoch = True
 
     for epoch in range(config.epochs):
+        seed_everything(config.seed + fold)
         epoch_start = time.time()
         if schedule_per_epoch:
             scheduler.step(epoch)
@@ -374,27 +415,18 @@ def _fit_one_fold(
             # train with soft label
             image = batch["image"].to(device, non_blocking=True)
             avg_mask = batch["avg_mask"].to(device, non_blocking=True)
-            # target = batch["target"].to(device, non_blocking=True)
+            raw_size_avg_mask = batch["raw_size_avg_mask"].to(device, non_blocking=True)
             bs = image.size(0)
+            # if augmented==True => 1 else 0
+            is_augmented = batch["is_augmented"].to(device, non_blocking=True)
 
             with torch.cuda.amp.autocast_mode.autocast(
                 enabled=config.use_amp, dtype=torch.float16
             ):
                 outs = model(image)
-                # size: 512
-                loss = (
-                    # 512x512
-                    loss_fn(y_pred=outs["logits"], y_true=avg_mask)  # type: ignore
-                    # resized_avg_mask = torch.nn.functional.interpolate(
-                    #     avg_mask, size=(256, 256), mode="bilinear"
-                    # )
-                    # Duplicate resize is not good
-                    # 256x256
-                    + loss_fn(
-                        outs["preds"],
-                        batch["raw_size_avg_mask"].to(device, non_blocking=True),
-                    )
-                )
+                loss_aug = loss_fn(outs["logits"], avg_mask).mean(dim=(1, 2, 3))
+                loss_ori = loss_fn(outs["preds"], raw_size_avg_mask).mean(dim=(1, 2, 3))
+                loss = torch.mean(loss_aug + is_augmented * loss_ori)
 
             # Backpropagation
             if config.use_amp:
@@ -412,12 +444,13 @@ def _fit_one_fold(
 
             if (
                 debug
+                or save_assets
                 or (epoch == config.epochs - 1 and i == len(dl_train) - 1)
                 or (patience_cnt == config.patience - 1 and i == len(dl_train) - 1)
             ):
                 save_dir = Path(f"debug/{config.expname}/train")
                 save_dir.mkdir(parents=True, exist_ok=True)
-                _plot_for_debug(
+                plot_for_debug(
                     image, batch["avg_mask"], preds, save_dir, batch["record_id"]
                 )
 
