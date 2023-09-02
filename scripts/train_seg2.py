@@ -233,26 +233,16 @@ class ContrailDatasetV3(Dataset):
         )
         mask = avg_mask if self._use_soft_label else pixel_mask
         assert mask.shape == (256, 256)
-
-        if np.random.randn() < self._augment_prob:
-            is_augmented = 1
-            augmented = self._transform(image=resized_image, mask=mask)
-            # (1, 256,256)
-            raw_size_avg_mask: torch.Tensor = augmented["mask"].reshape(1, 256, 256)
-            # (C, H, W)
-            image = augmented["image"]
-        else:
-            is_augmented = 0
-            # (1, 256, 256)
-            raw_size_avg_mask = torch.tensor(mask).reshape(1, 256, 256)
-            # (C, H, W)
-            image = torch.from_numpy(resized_image).permute(2, 0, 1).float()
-
+        augmented = self._transform(image=resized_image, mask=mask)
+        # (C, H, W)
+        image = augmented["image"]
+        # (1, 256, 256)
+        raw_size_avg_mask = augmented["mask"].reshape(1, 256, 256)
         # (1, H, W)
         resized_avg_mask = F_t.resize(
             raw_size_avg_mask,
             [*self._img_size],
-            InterpolationMode.BILINEAR,
+            InterpolationMode.BICUBIC,
             antialias=True,
         ).reshape(1, *self._img_size)
 
@@ -265,7 +255,6 @@ class ContrailDatasetV3(Dataset):
             "avg_mask": resized_avg_mask,
             "raw_size_avg_mask": raw_size_avg_mask,
             "record_id": record_id,
-            "is_augmented": torch.tensor(is_augmented),
         }
 
 
@@ -345,7 +334,7 @@ def validated(
         ):
             outs = model(image)
         preds = outs["preds"].detach().float().cpu()
-        loss = loss_fn(preds, target).mean(dim=(1, 2, 3)).mean()
+        loss = loss_fn(preds, target)
         losses.update(loss.item(), bs)
 
         # Metrics
@@ -417,16 +406,14 @@ def _fit_one_fold(
             avg_mask = batch["avg_mask"].to(device, non_blocking=True)
             raw_size_avg_mask = batch["raw_size_avg_mask"].to(device, non_blocking=True)
             bs = image.size(0)
-            # if augmented==True => 1 else 0
-            is_augmented = batch["is_augmented"].to(device, non_blocking=True)
 
             with torch.cuda.amp.autocast_mode.autocast(
                 enabled=config.use_amp, dtype=torch.float16
             ):
                 outs = model(image)
-                loss_aug = loss_fn(outs["logits"], avg_mask).mean(dim=(1, 2, 3))
-                loss_ori = loss_fn(outs["preds"], raw_size_avg_mask).mean(dim=(1, 2, 3))
-                loss = torch.mean(loss_aug + is_augmented * loss_ori)
+                loss_aug = loss_fn(outs["logits"], avg_mask)
+                loss_ori = loss_fn(outs["preds"], raw_size_avg_mask)
+                loss = loss_aug + loss_ori
 
             # Backpropagation
             if config.use_amp:

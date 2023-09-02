@@ -194,7 +194,7 @@ def get_loss(
         case LossType.SoftBCE:
             if loss_params is None:
                 return smp.losses.SoftBCEWithLogitsLoss()
-            return smp.losses.SoftBCEWithLogitsLoss(**loss_params, reduction="none")
+            return smp.losses.SoftBCEWithLogitsLoss(**loss_params)
         case LossType.Dice:
             if loss_params is None:
                 return smp.losses.DiceLoss(mode="binary")

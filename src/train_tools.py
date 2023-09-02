@@ -810,9 +810,9 @@ class ValidAssets(NamedTuple):
 def make_tta_model(model: nn.Module) -> nn.Module:
     transform = tta.Compose(
         [
+            tta.Rotate90(angles=[0, 90, 180, 270]),
             tta.HorizontalFlip(),
             # tta.VerticalFlip(),
-            tta.Rotate90(angles=[0, 90, 180, 270]),
         ]
     )
     tta_model = tta.SegmentationTTAWrapper(
