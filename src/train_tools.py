@@ -9,6 +9,7 @@ from typing import (
     Any,
     Callable,
     Iterable,
+    Literal,
     NamedTuple,
     Protocol,
     Sequence,
@@ -286,6 +287,45 @@ class EarlyStopping:
         state_dict = model.state_dict()
         torch.save(state_dict, save_path)
         self.min_score = score
+
+
+class EarlyStoppingV2:
+    def __init__(
+        self, patience: int, direction: Literal["maximize", "minimize"]
+    ) -> None:
+        if direction not in ["maximize", "minimize"]:
+            raise ValueError(f"{direction = }")
+
+        self._patience = patience
+        self._direction = direction
+        self._counter = 0
+        self._best_score = float("-inf") if direction == "maximize" else float("inf")
+
+    def _update_condition(self, score: float, best_score: float) -> bool:
+        if self._direction == "maximize":
+            return score > best_score
+        else:
+            return score < best_score
+
+    def _save(self, model: nn.Module, save_path: Path) -> None:
+        state = model.state_dict()
+        torch.save(state, save_path)
+        logger.info(f"Saved model to {save_path}")
+
+    def check(self, score: float, model: nn.Module, save_path: Path) -> None:
+        if self._update_condition(score, self._best_score):
+            self._best_score = score
+            self._counter = 0
+            self._save(model, save_path)
+        else:
+            self._counter += 1
+            logger.info(
+                f"EarlyStopping counter: {self._counter} out of {self._patience}"
+            )
+
+    @property
+    def is_early_stop(self) -> bool:
+        return self._counter >= self._patience
 
 
 def seed_everything(seed: int = 42) -> None:
