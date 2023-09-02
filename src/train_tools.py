@@ -291,7 +291,10 @@ class EarlyStopping:
 
 class EarlyStoppingV2:
     def __init__(
-        self, patience: int, direction: Literal["maximize", "minimize"]
+        self,
+        patience: int,
+        direction: Literal["maximize", "minimize"],
+        delta: float = 0.0,
     ) -> None:
         if direction not in ["maximize", "minimize"]:
             raise ValueError(f"{direction = }")
@@ -300,12 +303,13 @@ class EarlyStoppingV2:
         self._direction = direction
         self._counter = 0
         self._best_score = float("-inf") if direction == "maximize" else float("inf")
+        self._delta = delta
 
     def _update_condition(self, score: float, best_score: float) -> bool:
         if self._direction == "maximize":
-            return score > best_score
+            return score + self._delta > best_score
         else:
-            return score < best_score
+            return score + self._delta < best_score
 
     def _save(self, model: nn.Module, save_path: Path) -> None:
         state = model.state_dict()
