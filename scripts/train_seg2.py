@@ -202,8 +202,8 @@ class ContrailDatasetV3(Dataset):
         resized_image = resize_fn(raw_image, self._img_size)
 
         if self._phase == "test":
-            # resized_image = self._resized_img(raw_image, self._img_size)
             image = self._transform(image=resized_image)["image"]
+            image = torch.from_numpy(image).float().permute(2, 0, 1).float()
             return {
                 "image": image,
                 "record_id": record_id,
@@ -216,11 +216,12 @@ class ContrailDatasetV3(Dataset):
         )
         if self._phase == "valid":
             assert pixel_mask.shape == (256, 256)
-            # resized_image = self._resized_img(raw_image, self._img_size)
             augmented = self._transform(image=resized_image, mask=pixel_mask)
+            image = torch.from_numpy(augmented["image"]).permute(2, 0, 1).float()
+            mask = torch.from_numpy(augmented["mask"]).reshape(1, 256, 256).float()
             return {
-                "image": augmented["image"],
-                "target": augmented["mask"].reshape(1, 256, 256),
+                "image": image,
+                "target": mask,
                 "record_id": record_id,
             }
 
@@ -235,16 +236,21 @@ class ContrailDatasetV3(Dataset):
         assert mask.shape == (256, 256)
         augmented = self._transform(image=resized_image, mask=mask)
         # (C, H, W)
-        image = augmented["image"]
+        image = torch.from_numpy(augmented["image"]).float().permute(2, 0, 1)
         # (1, 256, 256)
         raw_size_avg_mask = augmented["mask"].reshape(1, 256, 256)
         # (1, H, W)
-        resized_avg_mask = F_t.resize(
-            raw_size_avg_mask,
-            [*self._img_size],
-            InterpolationMode.BICUBIC,
-            antialias=True,
-        ).reshape(1, *self._img_size)
+        resized_avg_mask = (
+            torch.from_numpy(
+                cv2.resize(
+                    raw_size_avg_mask.reshape(256, 256),
+                    dsize=self._img_size,
+                    interpolation=cv2.INTER_LINEAR,
+                )
+            )
+            .float()
+            .reshape(1, *self._img_size)
+        )
 
         # 回転してないからtrainの精度はでない, 256x256
         target_pixel_mask = torch.from_numpy(pixel_mask).float().reshape(1, 256, 256)

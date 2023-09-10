@@ -13,9 +13,9 @@ IMG_SIZE = 512
 # IMG_SIZE = 1024
 
 DESC = f"""
-# exp044
+# exp045
 
-copy from exp043
+copy from exp044
 
 # Purpose
 
@@ -57,7 +57,7 @@ config = {
     "n_splits": 5,
     # -- Training
     "use_soft_label": True,
-    "use_amp": True,
+    "use_amp": False,
     "train_batch_size": 8,
     "valid_batch_size": 8,
     "output_dir": Path(f"./output/{expname}"),
@@ -76,8 +76,9 @@ config = {
     "optimizer_type": "adamw",
     "optimizer_params": {
         "lr": 8e-4,
-        "weight_decay": 1e-2,
-        "eps": 1e-4,
+        "weight_decay": 2e-2,
+        # "eps": 1e-4,
+        "eps": 1e-8,
     },
     "scheduler_type": "cosine_with_warmup",
     "scheduler_params": {
@@ -90,10 +91,18 @@ config = {
     "train_aug_list": [
         A.RandomRotate90(p=1.0),
         A.HorizontalFlip(p=0.5),
-        A.ShiftScaleRotate(rotate_limit=30, scale_limit=0.1, p=0.75),
+        A.ShiftScaleRotate(rotate_limit=30, scale_limit=0.2, p=0.75),
+        A.Cutout(
+            max_h_size=IMG_SIZE // 16, max_w_size=IMG_SIZE // 16, num_holes=8, p=0.5
+        ),
+        # ToTensorV2(),
     ],
-    "valid_aug_list": [],
-    "test_aug_list": [],
+    "valid_aug_list": [
+        ToTensorV2(),
+    ],
+    "test_aug_list": [
+        ToTensorV2(),
+    ],
     "aug_params": dict(
         do_mixup=False,
         mixup_alpha=1.0,
@@ -107,7 +116,7 @@ config = {
     ),
     # -- Inference
     "test_batch_size": 8,
-    "threshold": 0.5,
+    "threshold": 0.45,
 }
 
 
